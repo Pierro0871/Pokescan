@@ -5,18 +5,33 @@
   // rgba : pixels w×h. Renvoie les 4 coins [tl, tr, br, bl] (carte en portrait) ou null.
   // Plusieurs réglages tentés : un fond texturé (bois, tapis) peut coller ses contours à ceux de la carte
   const TRIES = [{ blur: 5, lo: 40, hi: 120, dil: true }, { blur: 9, lo: 60, hi: 180, dil: true }, { blur: 5, lo: 50, hi: 150, dil: false }];
+  // Carte principale (la plus grande) ou null
   function findCard(cv, rgba, w, h) {
+    const all = findCards(cv, rgba, w, h, 0.1);
+    return all.length ? all.reduce((a, b) => (b.area > a.area ? b : a)).q : null;
+  }
+
+  // Toutes les cartes de l'image (page de classeur) : [{ q: coins, area }], en ordre de lecture
+  function findCards(cv, rgba, w, h, minFrac = 0.02) {
     const src = cv.matFromArray(h, w, cv.CV_8UC4, rgba), gray = new cv.Mat();
     try {
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-      for (const t of TRIES) { const q = findIn(cv, gray, w, h, t); if (q) return q; }
-      return null;
+      for (const t of TRIES) {
+        const found = findIn(cv, gray, w, h, t, minFrac);
+        if (found.length) {
+          // ordre de lecture : par rangée (centre y), puis de gauche à droite
+          const c = f => ({ x: f.q.reduce((a, p) => a + p.x, 0) / 4, y: f.q.reduce((a, p) => a + p.y, 0) / 4 });
+          const hgt = Math.sqrt(found[0].area / RATIO);
+          return found.sort((a, b) => Math.abs(c(a).y - c(b).y) > hgt / 2 ? c(a).y - c(b).y : c(a).x - c(b).x);
+        }
+      }
+      return [];
     } finally { src.delete(); gray.delete(); }
   }
 
-  function findIn(cv, gray, w, h, t) {
+  function findIn(cv, gray, w, h, t, minFrac) {
     const g = new cv.Mat(), edges = new cv.Mat(), contours = new cv.MatVector(), hier = new cv.Mat(), k = cv.Mat.ones(3, 3, cv.CV_8U);
-    let best = null;
+    const out = [];
     try {
       cv.GaussianBlur(gray, g, new cv.Size(t.blur, t.blur), 0);
       cv.Canny(g, edges, t.lo, t.hi);
@@ -25,7 +40,7 @@
       for (let i = 0; i < contours.size(); i++) {
         const c = contours.get(i);
         const area = cv.contourArea(c);
-        if (area > 0.1 * w * h && (!best || area > best.area)) {
+        if (area > minFrac * w * h) {
           // minAreaRect encaisse les coins arrondis de la carte et un contour un peu mangé
           const r = cv.minAreaRect(c);
           const fill = area / (r.size.width * r.size.height);
@@ -38,13 +53,13 @@
             if (approx.rows === 4 && Math.abs(cv.contourArea(approx) / (r.size.width * r.size.height) - 1) > 0.06)
               pts = Array.from({ length: 4 }, (_, j) => ({ x: approx.data32S[j * 2], y: approx.data32S[j * 2 + 1] }));
             approx.delete();
-            best = { area, pts };
+            out.push({ area, q: orderCorners(pts) });
           }
         }
         c.delete();
       }
     } finally { [g, edges, contours, hier, k].forEach(m => m.delete()); }
-    return best && orderCorners(best.pts);
+    return out;
   }
 
   // Ordonne les coins tl, tr, br, bl, puis tourne d'un cran si la carte est couchée
@@ -88,6 +103,6 @@
     return m ? { num: +m[1], tot: +m[2] } : null;
   }
 
-  const api = { findCard, orderCorners, warp, median, parseNumber };
+  const api = { findCard, findCards, orderCorners, warp, median, parseNumber };
   if (typeof module !== 'undefined') module.exports = api; else root.VISION = api;
 })(this);

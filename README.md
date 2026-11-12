@@ -18,6 +18,6 @@ L'appli vérifie au démarrage s'il y a une nouvelle release (bandeau jaune → 
 - **Stats** → valeur, doublons, coefficients de prix par état, export CSV, sauvegarde / restauration.
 
 ## Dev
-`www/` = l'appli (HTML/JS sans framework), `www/fp.js` = empreintes et calculs, `www/vision.js` = détection des bords (OpenCV) et lecture du numéro (Tesseract). Tests : `npm test`. Librairies copiées dans `www/vendor` par `npm run vendor`.
-`native/` = plugin Android de mise à jour (copié par le workflow).
+`www/` = l'appli (HTML/JS sans framework) : `core.js` (stockage, collection, fiche carte), `scan.js` (caméra, reconnaissance, session, page de classeur, ajout rapide), `views.js` (écrans), `fp.js` (empreintes), `logic.js` (tris, boosters, succès), `vision.js` (OpenCV + Tesseract). Tests : `npm test`. Librairies copiées dans `www/vendor` par `npm run vendor`.
+`native/` = code Android (mise à jour intégrée, widget, icônes), appliqué par `native/patch_android.py` dans le workflow.
 Chaque push sur `main` compile l'APK (GitHub Actions) et publie une release.

@@ -182,7 +182,7 @@
     return { trend: t == null ? null : t * k, avg: a == null ? null : a * k };
   }
 
-  function entryKey(e) { return [e.cardId, e.variant, e.cond, e.note || ''].join('|'); }
+  function entryKey(e) { return [e.cardId, e.variant, e.cond, e.note || '', e.paid ?? ''].join('|'); }
 
   // Ajoute (ou fusionne) une entrée dans la collection, renvoie la collection
   function addEntry(coll, e) {

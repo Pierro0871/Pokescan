@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -10,6 +10,11 @@
 <div id="update" hidden></div>
 <main>
   <section id="view-scan" class="view">
+    <div class="row seg" role="group" aria-label="Mode de scan">
+      <button class="chip on" data-mode="one">1 carte</button><button class="chip" data-mode="page">Page de classeur</button>
+      <span class="grow"></span>
+      <button class="chip on" data-var="normal">Normale</button><button class="chip" data-var="reverse">Reverse</button><button class="chip" data-var="holo">Holo</button>
+    </div>
     <div id="cam">
       <video id="video" playsinline muted></video>
       <canvas id="overlay"></canvas>
@@ -17,28 +22,29 @@
       <button id="torch" class="torch" hidden aria-label="Lampe torche">🔦</button>
       <p id="cam-msg"></p>
     </div>
+    <div id="session"></div>
     <div id="matches"></div>
     <button id="btn-scan" class="ghost big">Choisir manuellement</button>
+    <form id="quick-form" class="row">
+      <input id="quick-q" placeholder="Ajout rapide : « 045/198 » ou « Nuit Noire 45 »" autocomplete="off">
+      <button class="ghost">Ajouter</button>
+    </form>
   </section>
 
   <section id="view-coll" class="view" hidden></section>
-
-  <section id="view-search" class="view" hidden>
-    <form id="search-form" class="row">
-      <input id="search-q" type="search" placeholder="Nom du Pokémon (ex. Dracaufeu)" autocomplete="off">
-      <button class="primary">OK</button>
-    </form>
-    <div id="search-res"></div>
-  </section>
-
+  <section id="view-poke" class="view" hidden></section>
+  <section id="view-boost" class="view" hidden></section>
   <section id="view-stats" class="view" hidden></section>
 </main>
 
+<div id="undobar" hidden><button id="undo" aria-label="Annuler">↶</button><button id="redo" aria-label="Rétablir">↷</button></div>
+
 <nav id="tabs">
-  <button data-view="scan" class="on">Scan</button>
-  <button data-view="coll">Collection</button>
-  <button data-view="search">Pokémon</button>
-  <button data-view="stats">Stats</button>
+  <button data-view="scan" class="on"><span>📷</span>Scan</button>
+  <button data-view="coll"><span>🗂️</span>Collection</button>
+  <button data-view="poke"><span>🔎</span>Pokémon</button>
+  <button data-view="boost"><span>🎁</span>Boosters</button>
+  <button data-view="stats"><span>📊</span>Stats</button>
 </nav>
 
 <div id="sheet" hidden><div id="sheet-box"></div></div>
@@ -47,9 +53,12 @@
 
 <script src="version.js"></script>
 <script src="fp.js"></script>
+<script src="logic.js"></script>
 <script src="vision.js"></script>
 <script src="vendor/tesseract.min.js"></script>
 <script async src="vendor/opencv.js"></script>
-<script src="app.js"></script>
+<script src="core.js"></script>
+<script src="scan.js"></script>
+<script src="views.js"></script>
 </body>
 </html>

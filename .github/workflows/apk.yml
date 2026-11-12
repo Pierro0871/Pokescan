@@ -17,14 +17,7 @@ jobs:
       - run: npm run vendor
       - run: echo "window.APP_VERSION = ${{ github.run_number }};" > www/version.js
       - run: npx cap add android
-      - name: Permissions + code natif (mise à jour intégrée)
-        run: |
-          M=android/app/src/main/AndroidManifest.xml
-          for P in CAMERA VIBRATE REQUEST_INSTALL_PACKAGES; do
-            sed -i "s#<uses-permission android:name=\"android.permission.INTERNET\" />#&\n    <uses-permission android:name=\"android.permission.$P\" />#" $M
-          done
-          test "$(grep -c android.permission $M)" -eq 4
-          cp native/*.java android/app/src/main/java/fr/pierrick/pokescan/
+      - run: python3 native/patch_android.py
       - run: npx cap sync android
       # Toujours la même clé (ci/debug.keystore) : sinon chaque nouvelle APK refuse de s'installer par-dessus
       - run: |

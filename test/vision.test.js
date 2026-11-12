@@ -57,6 +57,26 @@ Promise.resolve(require('@techstark/opencv-js')).then(cv => {
   console.log(`carte penchée ±25° + perspective + reflet : détectée ${found}/30, top1 ${top1}/30, top5 ${top5}/30`);
   assert(found >= 27 && top1 >= 25, 'détection des bords insuffisante');
 
+  // page de classeur : 9 cartes en 3×3, pochettes plastique grises entre les cartes
+  {
+    const W = 900, H = 1200, px = new Uint8ClampedArray(W * H * 4).fill(255);
+    for (let k = 0; k < px.length; k += 4) { px[k] = 60; px[k + 1] = 62; px[k + 2] = 70; }
+    const cw = 252, ch = 352, gx = 36, gy = 40, ox = (W - 3 * cw - 2 * gx) / 2, oy = (H - 3 * ch - 2 * gy) / 2;
+    for (let n = 0; n < 9; n++) {
+      const img = cardImg(n + 1, cw, ch), x0 = Math.round(ox + (n % 3) * (cw + gx)), y0 = Math.round(oy + Math.floor(n / 3) * (ch + gy));
+      for (let y = 0; y < ch; y++) px.set(img.subarray(y * cw * 4, (y + 1) * cw * 4), ((y0 + y) * W + x0) * 4);
+    }
+    const found = V.findCards(cv, px, W, H);
+    let ok = 0;
+    found.forEach((f, n) => {
+      const img = V.warp(cv, px, W, H, f.q, 126, 176);
+      const qs = FP.nearCrops().map(c => FP.fingerprint(FP.resample(img, 126, 176, c)));
+      if (FP.rank(qs, refs)[0].card.id === 'c' + n) ok++;
+    });
+    console.log(`page de classeur : ${found.length} cartes trouvées, ${ok}/9 reconnues dans l'ordre`);
+    assert(found.length === 9 && ok === 9, 'page de classeur');
+  }
+
   // coins : carte couchée -> remise en portrait
   const q = V.orderCorners([{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 280 }, { x: 0, y: 280 }]);
   assert(Math.hypot(q[0].x - q[1].x, q[0].y - q[1].y) < Math.hypot(q[1].x - q[2].x, q[1].y - q[2].y));
