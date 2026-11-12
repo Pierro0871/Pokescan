@@ -7,11 +7,14 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="update" hidden></div>
 <main>
   <section id="view-scan" class="view">
     <div id="cam">
       <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
       <div id="guide"></div>
+      <button id="torch" class="torch" hidden aria-label="Lampe torche">🔦</button>
       <p id="cam-msg"></p>
     </div>
     <div id="matches"></div>
@@ -42,7 +45,11 @@
 <div id="toast" hidden></div>
 <input id="import-file" type="file" accept="application/json,.json" hidden>
 
+<script src="version.js"></script>
 <script src="fp.js"></script>
+<script src="vision.js"></script>
+<script src="vendor/tesseract.min.js"></script>
+<script async src="vendor/opencv.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

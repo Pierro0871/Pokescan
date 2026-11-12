@@ -64,6 +64,7 @@ async function init() {
   for (const id of S.fpSets) S.fpCards.push(...((await kv.get('fp:' + id)) || []));
   document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => show(b.dataset.view));
   $('#btn-scan').onclick = () => { if (!A.res) return toast('Vise une carte d\'abord'); propose(false); };
+  $('#torch').onclick = toggleTorch;
   $('#search-form').onsubmit = e => { e.preventDefault(); search($('#search-q').value.trim()); };
   $('#sheet').onclick = e => { if (e.target.id === 'sheet') closeSheet(); };
   $('#import-file').onchange = importBackup;
@@ -166,7 +167,7 @@ async function downloadSet(set) {
   const canvas = document.createElement('canvas'); canvas.width = FP.W; canvas.height = FP.H;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   await pool(cards, 6, async c => {
-    const card = { id: c.id, localId: c.localId, name: c.name, image: c.image, setId: set.id, setName: set.name };
+    const card = { id: c.id, localId: c.localId, name: c.name, image: c.image, setId: set.id, setName: set.name, official: set.cardCount?.official };
     try {
       const d = await getJSON('/cards/' + encodeURIComponent(c.id));
       card.variants = d.variants;
@@ -263,7 +264,12 @@ function closeSheet() {
   $('#sheet').hidden = true; S.sheetCard = null; S.sheetClose && S.sheetClose(); }
 
 // ---------- scan automatique ----------
-const A = { timer: 0, res: null, lastTop: null, doubtSince: 0, hold: null, paused: false };
+const A = { timer: 0, res: null, qs: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, track: null, torch: false };
+let CV = null; // OpenCV, chargé en arrière-plan (13 Mo)
+function cvReady() {
+  if (!CV && window.cv && !cvReady.p) cvReady.p = Promise.resolve(window.cv).then(m => { CV = m; });
+  return CV;
+}
 
 async function startCam() {
   const v = $('#video');
@@ -272,6 +278,8 @@ async function startCam() {
     try {
       v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
       await v.play();
+      A.track = v.srcObject.getVideoTracks()[0];
+      $('#torch').hidden = !A.track.getCapabilities?.().torch; A.torch = false; $('#torch').classList.remove('on');
     } catch (err) { return status('Caméra indisponible : ' + err.message); }
   }
   clearTimeout(A.timer); loop();
@@ -279,43 +287,138 @@ async function startCam() {
 function stopCam() {
   clearTimeout(A.timer);
   const v = $('#video');
-  v.srcObject?.getTracks().forEach(t => t.stop()); v.srcObject = null;
+  v.srcObject?.getTracks().forEach(t => t.stop()); v.srcObject = null; A.track = null;
 }
-function status(t) { $('#cam-msg').textContent = t || `Pose la carte à plat dans le rectangle · ${S.fpSets.length} extension(s) activée(s)`; }
+async function toggleTorch() {
+  if (!A.track) return;
+  A.torch = !A.torch;
+  try { await A.track.applyConstraints({ advanced: [{ torch: A.torch }] }); } catch { A.torch = false; }
+  $('#torch').classList.toggle('on', A.torch);
+}
+function status(t) { $('#cam-msg').textContent = t || `Pose la carte dans le rectangle · ${S.fpSets.length} extension(s) activée(s)`; }
 
-// Une passe : capture du cadre agrandi, puis recherche sur plusieurs cadrages
-function runSearch() {
+// Retour : vibration + petit son
+let audio;
+function feedback(kind) {
+  navigator.vibrate?.(kind === 'add' ? [30, 50, 30] : 25);
+  try {
+    audio ||= new AudioContext();
+    const t = audio.currentTime, o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.setValueAtTime(kind === 'add' ? 660 : 880, t);
+    o.frequency.setValueAtTime(kind === 'add' ? 990 : 1320, t + 0.07);
+    g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.connect(g).connect(audio.destination); o.start(t); o.stop(t + 0.2);
+  } catch { }
+}
+
+// Géométrie : zone capturée = cadre agrandi de 35 % (la carte peut dépasser ou être penchée)
+function captureRect() {
+  const v = $('#video'), cam = $('#cam').getBoundingClientRect(), g = $('#guide').getBoundingClientRect();
+  const r = FP.guideToVideo(v.videoWidth, v.videoHeight, cam.width, cam.height, { x: g.left - cam.left, y: g.top - cam.top, w: g.width, h: g.height });
+  const m = 0.35, x = Math.max(0, r.x - r.w * m), y = Math.max(0, r.y - r.h * m);
+  return { x, y, w: Math.min(v.videoWidth, r.x + r.w * (1 + m)) - x, h: Math.min(v.videoHeight, r.y + r.h * (1 + m)) - y, guide: r, cam };
+}
+function grab(src, sx, sy, sw, sh, w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+  return ctx.getImageData(0, 0, w, h).data;
+}
+const rot180 = px => { const o = new Uint8ClampedArray(px.length), n = px.length / 4; for (let i = 0; i < n; i++) o.set(px.subarray(i * 4, i * 4 + 4), (n - 1 - i) * 4); return o; };
+
+// Contour vert de la carte détectée, dessiné par-dessus la vidéo
+function drawCorners(q, cr) {
+  const ov = $('#overlay'), cam = cr.cam, v = $('#video');
+  ov.width = cam.width; ov.height = cam.height;
+  const ctx = ov.getContext('2d'); ctx.clearRect(0, 0, ov.width, ov.height);
+  $('#guide').classList.toggle('found', !!q);
+  if (!q) return;
+  const s = Math.max(cam.width / v.videoWidth, cam.height / v.videoHeight), ox = (cam.width - v.videoWidth * s) / 2, oy = (cam.height - v.videoHeight * s) / 2;
+  ctx.beginPath();
+  q.forEach((p, i) => ctx[i ? 'lineTo' : 'moveTo']((cr.x + p.x) * s + ox, (cr.y + p.y) * s + oy));
+  ctx.closePath(); ctx.lineWidth = 4; ctx.strokeStyle = '#3ecf8e'; ctx.shadowColor = '#3ecf8e'; ctx.shadowBlur = 14; ctx.stroke();
+}
+
+// Lecture du numéro (Tesseract, hors ligne, chargé à la première utilisation)
+let ocrP = null;
+function ocrWorker() {
+  if (!window.Tesseract) return null;
+  const u = f => new URL('vendor/' + f, location.href).href;
+  return ocrP ||= Tesseract.createWorker('eng', 1, {
+    workerPath: u('worker.min.js'), corePath: u('tesseract-core-simd-lstm.wasm.js'), langPath: u(''), gzip: false, workerBlobURL: false, cacheMethod: 'none'
+  }).then(async w => { await w.setParameters({ tessedit_char_whitelist: '0123456789/', tessedit_pageseg_mode: '11' }); return w; })
+    .catch(() => (ocrP = null));
+}
+async function readNumber(hi, w, h) {
+  const worker = await ocrWorker();
+  if (!worker) return null;
+  // bande du bas de la carte (numéro à gauche sur les cartes récentes, à droite sur les anciennes), agrandie ×2
+  const y0 = Math.round(h * 0.9), bh = Math.round(h * 0.09), c = document.createElement('canvas');
+  c.width = w * 2; c.height = bh * 2;
+  const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = bh;
+  tmp.getContext('2d').putImageData(new ImageData(hi.slice(y0 * w * 4, (y0 + bh) * w * 4), w, bh), 0, 0);
+  const ctx = c.getContext('2d'); ctx.filter = 'grayscale(1) contrast(1.6)'; ctx.drawImage(tmp, 0, 0, c.width, c.height);
+  try { return VISION.parseNumber((await worker.recognize(c)).data.text); } catch { return null; }
+}
+const officialOf = id => S.catalog?.flatMap(s => s.sets).find(s => s.id === id)?.cardCount?.official ?? S.fpCards.find(c => c.setId === id)?.official;
+
+// Une passe de scan. Renvoie { list, sure } ou null.
+async function pass() {
   const v = $('#video');
   if (!v.videoWidth || !S.fpCards.length) return null;
-  const cam = $('#cam').getBoundingClientRect(), g = $('#guide').getBoundingClientRect();
-  const r = FP.guideToVideo(v.videoWidth, v.videoHeight, cam.width, cam.height, { x: g.left - cam.left, y: g.top - cam.top, w: g.width, h: g.height });
-  const M = FP.MARGIN, area = runSearch.c ||= document.createElement('canvas');
-  const AW = area.width = Math.round(FP.W * 2 * (1 + 2 * M)), AH = area.height = Math.round(FP.H * 2 * (1 + 2 * M));
-  const ctx = area.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(v, r.x - r.w * M, r.y - r.h * M, r.w * (1 + 2 * M), r.h * (1 + 2 * M), 0, 0, AW, AH);
-  const px = ctx.getImageData(0, 0, AW, AH).data;
-  return FP.search(c => FP.fingerprint(FP.resample(px, AW, AH, c)), S.fpCards, 5);
+  const cr = captureRect();
+  const cv = cvReady();
+  if (cv) {
+    // détection sur une petite image, redressement depuis l'image pleine résolution
+    const sw = 480, sh = Math.round(480 * cr.h / cr.w), small = grab(v, cr.x, cr.y, cr.w, cr.h, sw, sh);
+    let q = null;
+    try { q = VISION.findCard(cv, small, sw, sh); } catch { }
+    if (q) {
+      const k = cr.w / sw, qv = q.map(p => ({ x: p.x * k, y: p.y * k }));
+      drawCorners(qv, cr);
+      const bw = Math.min(1200, Math.round(cr.w)), bh = Math.round(bw * cr.h / cr.w), kb = bw / cr.w;
+      const big = grab(v, cr.x, cr.y, cr.w, cr.h, bw, bh), qb = qv.map(p => ({ x: p.x * kb, y: p.y * kb }));
+      const lo = VISION.warp(cv, big, bw, bh, qb, 126, 176);
+      // anti-reflet : médiane des 3 dernières images si la carte n'a pas bougé
+      const moved = !A.corners || qv.some((p, i) => Math.hypot(p.x - A.corners[i].x, p.y - A.corners[i].y) > cr.w * 0.04);
+      A.frames = moved ? [lo] : [...A.frames.slice(-2), lo]; A.corners = qv;
+      const img = VISION.median(A.frames), flip = rot180(img);
+      const qs = FP.nearCrops().flatMap(c => [FP.fingerprint(FP.resample(img, 126, 176, c)), FP.fingerprint(FP.resample(flip, 126, 176, c))]);
+      const res = FP.rank(qs, S.fpCards).slice(0, 5);
+      let ocr = null;
+      if (res[0].d < FP.LOOSE_MAX) ocr = await readNumber(VISION.warp(cv, big, bw, bh, qb, 630, 880), 630, 880);
+      return { ...FP.decide(qs, res, S.fpCards, ocr, officialOf), plausible: true };
+    }
+  }
+  // sans bords détectés : recherche sur plusieurs cadrages dans le rectangle
+  drawCorners(null, cr); A.frames = []; A.corners = null;
+  const M = FP.MARGIN, g = cr.guide, AW = Math.round(FP.W * 2 * (1 + 2 * M)), AH = Math.round(FP.H * 2 * (1 + 2 * M));
+  const px = grab(v, g.x - g.w * M, g.y - g.h * M, g.w * (1 + 2 * M), g.h * (1 + 2 * M), AW, AH);
+  const res = FP.search(c => FP.fingerprint(FP.resample(px, AW, AH, c)), S.fpCards, 5);
+  return { list: res, sure: FP.isSure(res), plausible: res[0].d < FP.LOOSE_MAX };
 }
 
-function loop() {
+async function loop() {
   if (S.view !== 'scan') return;
   if (!A.paused && $('#sheet').hidden) {
-    const res = runSearch();
-    if (res && res.length) {
-      A.res = res;
-      const top = res[0].card.id, plausible = res[0].d < FP.LOOSE_MAX;
+    let r = null;
+    try { r = await pass(); } catch (err) { console.error(err); }
+    if (r && r.list.length && !A.paused && S.view === 'scan') {
+      A.res = r.list;
+      const top = r.list[0].card.id;
+      $('#guide').classList.toggle('searching', r.plausible);
       if (A.hold) { // attend que la carte précédente sorte du cadre
-        if (top !== A.hold || !plausible) A.hold = null; else status('Retire la carte pour scanner la suivante');
-      } else if (FP.isSure(res) && top === A.lastTop) { propose(true); } // sûr sur 2 passes de suite
-      else if (plausible) {
-        status('Recherche…');
+        if (top !== A.hold || !r.plausible) A.hold = null; else status('Retire la carte pour scanner la suivante');
+      } else if (r.sure && top === A.lastTop) { propose(true); } // sûr sur 2 passes de suite
+      else if (r.plausible) {
+        status(r.sure ? 'Presque…' : 'Recherche…');
         A.doubtSince ||= Date.now();
         if (Date.now() - A.doubtSince > 3000) propose(false);
       } else { A.doubtSince = 0; status(); }
       A.lastTop = top;
     }
   }
-  A.timer = setTimeout(loop, 300);
+  if (S.view === 'scan') A.timer = setTimeout(loop, 150);
 }
 
 function resume(holdId) {
@@ -325,6 +428,8 @@ function resume(holdId) {
 
 function choose(c) {
   addCard(c);
+  feedback('add');
+  const cam = $('#cam'); cam.classList.remove('flash'); void cam.offsetWidth; cam.classList.add('flash');
   resume(A.res[0].card.id === c.id ? c.id : A.res[0].card.id);
   toast(`Ajouté : <b>${esc(c.name)}</b> (${esc(c.setName)} ${esc(c.localId)}) — touche pour modifier`, () => openCard(c));
 }
@@ -332,6 +437,7 @@ function choose(c) {
 // sure : une seule carte à confirmer ; sinon les 5 plus probables
 function propose(sure) {
   A.paused = true;
+  if (sure) feedback('found');
   const res = A.res, box = $('#matches'), list = sure ? res.slice(0, 1) : res;
   status(sure ? 'Carte reconnue' : 'Pas sûr : choisis la bonne carte');
   box.innerHTML = (sure ? '' : '<p class="muted">Touche la bonne carte pour l\'ajouter :</p>') + list.map((m, i) => `
@@ -395,7 +501,10 @@ function renderStats() {
       <button class="primary" id="csv">Exporter en CSV (Excel)</button>
       <button class="primary" id="bak">Sauvegarder la collection (fichier)</button>
       <button class="ghost" id="imp">Restaurer une sauvegarde</button>
-    </div>`;
+    </div>
+    <h2>Application</h2>
+    <div class="row"><span class="grow muted">PokeScan v${VERSION || 'dev'}</span><button class="ghost" id="upd">Vérifier les mises à jour</button></div>`;
+  $('#upd').onclick = () => checkUpdate(true);
   el.querySelectorAll('.line').forEach(b => b.onclick = () => {
     const e = byId[b.dataset.id]; openCard({ id: e.cardId, localId: e.localId, name: e.name, image: e.image, setId: e.setId, setName: e.setName }, renderStats);
   });
@@ -439,4 +548,27 @@ async function importBackup(ev) {
   } catch (err) { toast('Restauration impossible : ' + esc(err.message)); }
 }
 
+// ---------- mises à jour ----------
+const REPO = 'Pierro0871/Pokescan', VERSION = window.APP_VERSION || 0;
+async function checkUpdate(manual) {
+  try {
+    const url = `https://api.github.com/repos/${REPO}/releases/latest`;
+    let rel = NATIVE ? await nativeGet(url, 'json') : await (await fetch(url)).json();
+    if (typeof rel === 'string') rel = JSON.parse(rel);
+    const n = parseInt(String(rel.tag_name).replace(/\D/g, ''), 10), apk = rel.assets?.find(a => a.name.endsWith('.apk'));
+    if (n > VERSION && apk) {
+      const b = $('#update');
+      b.innerHTML = `<span>Nouvelle version v${n} disponible</span><button>Installer</button>`; b.hidden = false;
+      b.querySelector('button').onclick = () => installUpdate(apk.browser_download_url, b);
+    } else if (manual) toast(`PokeScan est à jour (v${VERSION})`);
+  } catch (err) { if (manual) toast('Vérification impossible : ' + esc(err.message)); }
+}
+async function installUpdate(url, b) {
+  if (!NATIVE) return void (location.href = url);
+  b.innerHTML = '<span>Téléchargement de la mise à jour…</span>';
+  try { await Capacitor.nativePromise('ApkUpdater', 'install', { url }); b.hidden = true; }
+  catch (err) { b.innerHTML = `<span>Échec : ${esc(err.message)}</span><button>Réessayer</button>`; b.querySelector('button').onclick = () => installUpdate(url, b); }
+}
+
 init();
+if (NATIVE) checkUpdate(false);

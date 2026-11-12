@@ -69,35 +69,69 @@
 
   // Recherche grossière (grille de cadrages, toutes les cartes) puis fine autour des meilleurs cadrages
   // (40 meilleures cartes). fpOf(crop) renvoie l'empreinte d'un cadrage de la zone capturée.
-  function search(fpOf, cards, n = 5) {
-    const withFp = cards.filter(c => c.fp);
-    const coarse = crops().map(c => ({ c, f: fpOf(c) }));
-    // passe grossière sur le seul dHash (rapide) ; la couleur départage ensuite les 40 retenues
-    const qh = coarse.map(q => q.f.h);
-    const scored = withFp.map(card => {
+  // Classement des cartes pour une liste d'empreintes de la photo : passe rapide sur le dHash,
+  // puis la couleur départage les 40 meilleures. Renvoie [{ card, d, best }] (best = indice de l'empreinte gagnante).
+  function rank(qs, cards, keep = 40) {
+    const scored = [];
+    for (const card of cards) {
+      if (!card.fp) continue;
       const h = card.fp.h;
       let d = 257, bi = 0;
-      for (let k = 0; k < qh.length; k++) {
-        const a = qh[k];
+      for (let k = 0; k < qs.length; k++) {
+        const a = qs[k].h;
         const x = popcount(a[0] ^ h[0]) + popcount(a[1] ^ h[1]) + popcount(a[2] ^ h[2]) + popcount(a[3] ^ h[3])
           + popcount(a[4] ^ h[4]) + popcount(a[5] ^ h[5]) + popcount(a[6] ^ h[6]) + popcount(a[7] ^ h[7]);
         if (x < d) { d = x; bi = k; }
       }
-      return { card, d, best: coarse[bi].c };
-    }).sort((a, b) => a.d - b.d).slice(0, 40);
-    for (const s of scored) s.d = Infinity;
-    const all = coarse.map(q => q.f);
+      scored.push({ card, d, best: bi });
+    }
+    scored.sort((a, b) => a.d - b.d);
+    const top = scored.slice(0, keep);
+    for (const s of top) { s.d = Infinity; for (const q of qs) s.d = Math.min(s.d, distance(q, s.card.fp)); }
+    return top.sort((a, b) => a.d - b.d);
+  }
+
+  // Sans détection des bords : grille de cadrages (toutes les cartes), puis recherche fine autour des meilleurs.
+  // fpOf(crop) renvoie l'empreinte d'un cadrage de la zone capturée.
+  function search(fpOf, cards, n = 5) {
+    const cs = crops(), qs = cs.map(fpOf);
+    const top = rank(qs, cards);
     const fine = [], seen = new Set();
-    for (const s of scored.slice(0, 8)) {
+    for (const s of top.slice(0, 8)) {
       if (seen.has(s.best)) continue; seen.add(s.best);
+      const b = cs[s.best];
       for (const ds of [-0.04, -0.02, 0, 0.02, 0.04]) for (const dx of [-0.03, -0.015, 0, 0.015, 0.03]) for (const dy of [-0.03, -0.015, 0, 0.015, 0.03]) {
-        const w = s.best.w * (1 + ds), h = s.best.h * (1 + ds);
-        const c = { x: s.best.x + (s.best.w - w) / 2 + dx, y: s.best.y + (s.best.h - h) / 2 + dy, w, h };
-        fine.push(fpOf(c));
+        const w = b.w * (1 + ds), h = b.h * (1 + ds);
+        fine.push(fpOf({ x: b.x + (b.w - w) / 2 + dx, y: b.y + (b.h - h) / 2 + dy, w, h }));
       }
     }
-    for (const s of scored) for (const f of all.concat(fine)) s.d = Math.min(s.d, distance(f, s.card.fp));
-    return scored.sort((a, b) => a.d - b.d).slice(0, n).map(({ card, d }) => ({ card, d }));
+    for (const s of top) for (const f of fine) s.d = Math.min(s.d, distance(f, s.card.fp));
+    return top.sort((a, b) => a.d - b.d).slice(0, n).map(({ card, d }) => ({ card, d }));
+  }
+
+  // Carte déjà redressée : petits cadrages autour de la carte entière (±3 % taille, ±2 % position)
+  function nearCrops() {
+    const out = [];
+    for (const ds of [-0.03, 0, 0.03]) for (const dx of [-0.02, 0, 0.02]) for (const dy of [-0.02, 0, 0.02]) {
+      const w = 1 + ds; out.push({ x: (1 - w) / 2 + dx, y: (1 - w) / 2 + dy, w, h: w });
+    }
+    return out;
+  }
+
+  // Décision finale : le numéro lu (ex. 45/198) désigne la carte si l'image ne la contredit pas.
+  // officialOf(setId) = nombre officiel de cartes de l'extension.
+  function decide(qs, res, cards, ocr, officialOf) {
+    if (ocr) {
+      const num = c => parseInt(String(c.localId).replace(/^\D+/, ''), 10);
+      const cand = cards.filter(c => c.fp && num(c) === ocr.num && officialOf(c.setId) === ocr.tot);
+      if (cand.length) {
+        const best = cand.map(card => { let d = Infinity; for (const q of qs) d = Math.min(d, distance(q, card.fp)); return { card, d }; })
+          .sort((a, b) => a.d - b.d)[0];
+        const list = [best, ...res.filter(r => r.card.id !== best.card.id)].slice(0, 5);
+        return { list, sure: best.d < LOOSE_MAX, byNumber: best.d < LOOSE_MAX };
+      }
+    }
+    return { list: res, sure: isSure(res), byNumber: false };
   }
 
   // Scan auto : on ne propose une carte que si elle se détache nettement de la 2e
@@ -184,6 +218,6 @@
     return '﻿' + rows.map(r => r.map(esc).join(';')).join('\r\n');
   }
 
-  const api = { W, H, CROP, MARGIN, crops, search, resample, isSure, LOOSE_MAX, fingerprint, distance, topMatches, guideToVideo, CONDS, COND_LABEL, DEFAULT_COEF, unitPrice, entryKey, addEntry, stats, toCSV };
+  const api = { W, H, CROP, MARGIN, crops, search, rank, nearCrops, decide, resample, isSure, LOOSE_MAX, fingerprint, distance, topMatches, guideToVideo, CONDS, COND_LABEL, DEFAULT_COEF, unitPrice, entryKey, addEntry, stats, toCSV };
   if (typeof module !== 'undefined') module.exports = api; else root.FP = api;
 })(this);
