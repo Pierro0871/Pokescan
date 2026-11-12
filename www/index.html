@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PokeScan</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <section id="view-scan" class="view">
+    <div id="cam">
+      <video id="video" playsinline muted></video>
+      <div id="guide"></div>
+      <p id="cam-msg"></p>
+    </div>
+    <button id="btn-scan" class="primary big">Scanner</button>
+    <div id="matches"></div>
+  </section>
+
+  <section id="view-coll" class="view" hidden></section>
+
+  <section id="view-search" class="view" hidden>
+    <form id="search-form" class="row">
+      <input id="search-q" type="search" placeholder="Nom du Pokémon (ex. Dracaufeu)" autocomplete="off">
+      <button class="primary">OK</button>
+    </form>
+    <div id="search-res"></div>
+  </section>
+
+  <section id="view-stats" class="view" hidden></section>
+</main>
+
+<nav id="tabs">
+  <button data-view="scan" class="on">Scan</button>
+  <button data-view="coll">Collection</button>
+  <button data-view="search">Pokémon</button>
+  <button data-view="stats">Stats</button>
+</nav>
+
+<div id="sheet" hidden><div id="sheet-box"></div></div>
+<div id="toast" hidden></div>
+<input id="import-file" type="file" accept="application/json,.json" hidden>
+
+<script src="fp.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
