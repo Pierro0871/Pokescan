@@ -26,9 +26,17 @@ jobs:
           test "$(grep -c android.permission $M)" -eq 4
           cp native/*.java android/app/src/main/java/fr/pierrick/pokescan/
       - run: npx cap sync android
-      # Toujours la même clé : sinon chaque nouvelle APK refuse de s'installer par-dessus (et désinstaller efface la collection)
-      - run: mkdir -p ~/.android && cp ci/debug.keystore ~/.android/debug.keystore
-      - run: cd android && ./gradlew assembleDebug --no-daemon
+      # Toujours la même clé (ci/debug.keystore) : sinon chaque nouvelle APK refuse de s'installer par-dessus
+      - run: |
+          cd android && ./gradlew assembleDebug --no-daemon \
+            -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/ci/debug.keystore \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android
       - run: cp android/app/build/outputs/apk/debug/app-debug.apk PokeScan.apk
+      - name: Vérifier la signature
+        run: |
+          $(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)/apksigner verify --print-certs PokeScan.apk | tee certs.txt
+          grep -qi "558ea6d28ba7438521db31cd771eeb2482e7baf0edcd53f2cc3f0fe5431ed661" certs.txt
       - env: { GH_TOKEN: "${{ github.token }}" }
         run: gh release create "v${{ github.run_number }}" PokeScan.apk --title "PokeScan v${{ github.run_number }}" --notes "Télécharge PokeScan.apk depuis ton téléphone et installe-la."
