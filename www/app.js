@@ -1,5 +1,5 @@
 'use strict';
-const API = 'https://api.tcgdex.net/v2/fr';
+const API = 'https://api.tcgdex.net/v2/';
 const NATIVE = !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform());
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -31,8 +31,8 @@ async function nativeGet(url, responseType) {
   if (r.status >= 400) throw new Error('HTTP ' + r.status);
   return r.data;
 }
-async function getJSON(path) {
-  const url = API + path;
+async function getJSON(path, lang = 'fr') {
+  const url = API + lang + path;
   if (NATIVE) { const d = await nativeGet(url, 'json'); return typeof d === 'string' ? JSON.parse(d) : d; }
   const r = await fetch(url); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
 }
@@ -63,7 +63,7 @@ async function init() {
   S.fpSets = (await kv.get('fpsets')) || [];
   for (const id of S.fpSets) S.fpCards.push(...((await kv.get('fp:' + id)) || []));
   document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => show(b.dataset.view));
-  $('#btn-scan').onclick = scan;
+  $('#btn-scan').onclick = () => { if (!A.res) return toast('Vise une carte d\'abord'); propose(false); };
   $('#search-form').onsubmit = e => { e.preventDefault(); search($('#search-q').value.trim()); };
   $('#sheet').onclick = e => { if (e.target.id === 'sheet') closeSheet(); };
   $('#import-file').onchange = importBackup;
@@ -132,7 +132,8 @@ async function openSet(id, filter = 'all') {
   el.innerHTML = '<p class="muted">Chargement…</p>';
   let set;
   try { set = await getSet(id); } catch { el.innerHTML = '<p>Extension indisponible hors ligne.</p><button class="ghost" id="back">← Retour</button>'; $('#back').onclick = renderColl; return; }
-  const owned = ownedIds(), cards = set.cards || [];
+  const owned = ownedIds(), fpImg = Object.fromEntries(S.fpCards.filter(c => c.setId === id).map(c => [c.id, c.image]));
+  const cards = (set.cards || []).map(c => c.image || !fpImg[c.id] ? c : { ...c, image: fpImg[c.id] });
   const n = cards.filter(c => owned.has(c.id)).length;
   const shown = cards.filter(c => filter === 'all' || (filter === 'miss') !== owned.has(c.id));
   const ready = S.fpSets.includes(id);
@@ -171,9 +172,12 @@ async function downloadSet(set) {
       card.variants = d.variants;
       if (d.pricing?.cardmarket) S.prices[c.id] = d.pricing.cardmarket;
     } catch { }
-    if (c.image) {
+    if (!c.image) { // image FR absente (ex. promos récentes) : même illustration en anglais
+      try { card.image = (await getJSON('/cards/' + encodeURIComponent(c.id), 'en')).image; } catch { }
+    }
+    if (card.image) {
       try {
-        ctx.drawImage(await getImage(c.image + '/low.webp'), 0, 0, FP.W, FP.H);
+        ctx.drawImage(await getImage(card.image + '/low.webp'), 0, 0, FP.W, FP.H);
         card.fp = FP.fingerprint(ctx.getImageData(0, 0, FP.W, FP.H).data);
       } catch { noImg++; }
     } else noImg++;
@@ -258,42 +262,92 @@ function closeSheet() {
   S.coll = S.coll.reduce((acc, e) => FP.addEntry(acc, e), []); save();
   $('#sheet').hidden = true; S.sheetCard = null; S.sheetClose && S.sheetClose(); }
 
-// ---------- scan ----------
+// ---------- scan automatique ----------
+const A = { timer: 0, res: null, lastTop: null, doubtSince: 0, hold: null, paused: false };
+
 async function startCam() {
-  const v = $('#video'), msg = $('#cam-msg');
-  msg.textContent = S.fpSets.length ? 'Cadre la carte dans le rectangle' : 'Active d\'abord le scan d\'une extension dans Collection';
-  if (v.srcObject) return;
-  try {
-    v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
-    await v.play();
-  } catch (err) { msg.textContent = 'Caméra indisponible : ' + err.message; }
+  const v = $('#video');
+  status(S.fpSets.length ? '' : 'Active d\'abord le scan d\'une extension dans Collection');
+  if (!v.srcObject) {
+    try {
+      v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      await v.play();
+    } catch (err) { return status('Caméra indisponible : ' + err.message); }
+  }
+  clearTimeout(A.timer); loop();
 }
 function stopCam() {
+  clearTimeout(A.timer);
   const v = $('#video');
   v.srcObject?.getTracks().forEach(t => t.stop()); v.srcObject = null;
 }
+function status(t) { $('#cam-msg').textContent = t || `Pose la carte à plat dans le rectangle · ${S.fpSets.length} extension(s) activée(s)`; }
 
-function scan() {
-  const v = $('#video'), box = $('#matches');
-  if (!v.videoWidth) return toast('Caméra pas prête');
-  if (!S.fpCards.length) return toast('Active d\'abord le scan d\'une extension (onglet Collection)', () => show('coll'));
+// Une passe : capture du cadre agrandi, puis recherche sur plusieurs cadrages
+function runSearch() {
+  const v = $('#video');
+  if (!v.videoWidth || !S.fpCards.length) return null;
   const cam = $('#cam').getBoundingClientRect(), g = $('#guide').getBoundingClientRect();
   const r = FP.guideToVideo(v.videoWidth, v.videoHeight, cam.width, cam.height, { x: g.left - cam.left, y: g.top - cam.top, w: g.width, h: g.height });
-  const canvas = document.createElement('canvas'); canvas.width = FP.W; canvas.height = FP.H;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(v, r.x, r.y, r.w, r.h, 0, 0, FP.W, FP.H);
-  const res = FP.topMatches(FP.fingerprint(ctx.getImageData(0, 0, FP.W, FP.H).data), S.fpCards, 5);
-  box.innerHTML = '<p class="muted">Touche la bonne carte pour l\'ajouter :</p>' + res.map((m, i) => `
-    <button class="match" data-i="${i}">
+  const M = FP.MARGIN, area = runSearch.c ||= document.createElement('canvas');
+  const AW = area.width = Math.round(FP.W * 2 * (1 + 2 * M)), AH = area.height = Math.round(FP.H * 2 * (1 + 2 * M));
+  const ctx = area.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(v, r.x - r.w * M, r.y - r.h * M, r.w * (1 + 2 * M), r.h * (1 + 2 * M), 0, 0, AW, AH);
+  const px = ctx.getImageData(0, 0, AW, AH).data;
+  return FP.search(c => FP.fingerprint(FP.resample(px, AW, AH, c)), S.fpCards, 5);
+}
+
+function loop() {
+  if (S.view !== 'scan') return;
+  if (!A.paused && $('#sheet').hidden) {
+    const res = runSearch();
+    if (res && res.length) {
+      A.res = res;
+      const top = res[0].card.id, plausible = res[0].d < FP.LOOSE_MAX;
+      if (A.hold) { // attend que la carte précédente sorte du cadre
+        if (top !== A.hold || !plausible) A.hold = null; else status('Retire la carte pour scanner la suivante');
+      } else if (FP.isSure(res) && top === A.lastTop) { propose(true); } // sûr sur 2 passes de suite
+      else if (plausible) {
+        status('Recherche…');
+        A.doubtSince ||= Date.now();
+        if (Date.now() - A.doubtSince > 3000) propose(false);
+      } else { A.doubtSince = 0; status(); }
+      A.lastTop = top;
+    }
+  }
+  A.timer = setTimeout(loop, 300);
+}
+
+function resume(holdId) {
+  A.hold = holdId; A.paused = false; A.doubtSince = 0; A.lastTop = null;
+  $('#matches').innerHTML = ''; status();
+}
+
+function choose(c) {
+  addCard(c);
+  resume(A.res[0].card.id === c.id ? c.id : A.res[0].card.id);
+  toast(`Ajouté : <b>${esc(c.name)}</b> (${esc(c.setName)} ${esc(c.localId)}) — touche pour modifier`, () => openCard(c));
+}
+
+// sure : une seule carte à confirmer ; sinon les 5 plus probables
+function propose(sure) {
+  A.paused = true;
+  const res = A.res, box = $('#matches'), list = sure ? res.slice(0, 1) : res;
+  status(sure ? 'Carte reconnue' : 'Pas sûr : choisis la bonne carte');
+  box.innerHTML = (sure ? '' : '<p class="muted">Touche la bonne carte pour l\'ajouter :</p>') + list.map((m, i) => `
+    <button class="match ${sure ? 'sure' : ''}" data-i="${i}">
       ${m.card.image ? `<img src="${esc(m.card.image)}/low.webp" alt="">` : ''}
-      <span class="grow"><b>${esc(m.card.name)}</b><br><span class="muted">${esc(m.card.setName)} · n° ${esc(m.card.localId)}</span></span>
-    </button>`).join('');
-  box.querySelectorAll('.match').forEach(b => b.onclick = () => {
-    const c = res[+b.dataset.i].card;
-    addCard(c);
-    box.innerHTML = '';
-    toast(`Ajouté : <b>${esc(c.name)}</b> (${esc(c.setName)} ${esc(c.localId)}) — touche pour modifier`, () => openCard(c));
-  });
+      <span class="grow"><b>${esc(m.card.name)}</b><br><span class="muted">${esc(m.card.setName)} · n° ${esc(m.card.localId)}</span>${sure ? '<br><span class="add">Toucher pour ajouter</span>' : ''}</span>
+    </button>`).join('') + `
+    <div class="row">
+      ${sure ? '<button class="ghost" id="other">Pas celle-là</button>' : '<button class="ghost" id="notfound">Aucune : chercher par nom</button>'}
+      <button class="ghost" id="retry">Réessayer</button>
+    </div>
+    <p class="muted small">Le scan ne connaît que les extensions activées : ${esc(S.fpSets.map(setName).join(', '))}.</p>`;
+  box.querySelectorAll('.match').forEach(b => b.onclick = () => choose(list[+b.dataset.i].card));
+  $('#retry').onclick = () => resume(res[0].card.id);
+  if (sure) $('#other').onclick = () => propose(false);
+  else $('#notfound').onclick = () => { resume(res[0].card.id); show('search'); $('#search-q').focus(); };
 }
 
 // ---------- recherche par Pokémon ----------

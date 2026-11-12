@@ -59,4 +59,36 @@ assert(Math.abs(st.trend - 2.8) < 1e-9);
 const csv = FP.toCSV(coll, { 'sv1-1': { trend: 1.5, avg: 2 } }, FP.DEFAULT_COEF);
 assert(csv.split('\r\n')[1] === 'Écarlate et Violet;1;Pomdepik;normal;NM;2;;1,50;2,00;sv1-1', csv);
 assert(FP.toCSV([{ ...e, note: 'a;b "c"' }], {}, FP.DEFAULT_COEF).includes('"a;b ""c"""'));
+// 6. carte plus petite et décalée dans le cadre (fond bois autour) : les cadrages multiples la retrouvent
+function area(shapes, cr, seed) { // zone capturée AW×AH (RGBA), carte placée dans le rectangle cr (fractions), fond bois
+  const AW = 166, AH = 228, r = rng(seed), px = new Uint8ClampedArray(AW * AH * 4), cardPx = shapes && render(shapes, { gain: 0.85, bias: 15, noise: 20, seed });
+  for (let y = 0; y < AH; y++) for (let x = 0; x < AW; x++) {
+    const u = (x / AW - cr.x) / cr.w, v = (y / AH - cr.y) / cr.h, o = (y * AW + x) * 4;
+    if (shapes && u >= 0 && u < 1 && v >= 0 && v < 1) { const i = (Math.floor(v * H) * W + Math.floor(u * W)) * 4; px[o] = cardPx[i]; px[o + 1] = cardPx[i + 1]; px[o + 2] = cardPx[i + 2]; }
+    else { const w = 120 + 30 * Math.sin(y / 5 + x / 40) + r() * 20; px[o] = w; px[o + 1] = w * 0.8; px[o + 2] = w * 0.6; }
+    px[o + 3] = 255;
+  }
+  return px;
+}
+const cropTo = (a, c) => FP.resample(a, 166, 228, c);
+let sure = 0, sureWrong = 0; const ds = []; let small1 = 0, small5 = 0, single5 = 0;
+const base = 1 / (1 + 2 * FP.MARGIN);
+for (let i = 0; i < 300; i += 10) {
+  const s = 0.72 + (i % 30) / 100, cr = { x: 0.5 - base * s / 2 + 0.04, y: 0.5 - base * s / 2 - 0.03, w: base * s, h: base * s };
+  const a = area(card(i + 1), cr, i);
+  const res = FP.search(c => FP.fingerprint(cropTo(a, c)), refs, 5), m = res.map(x => x.card.id);
+  if (FP.isSure(res)) { sure++; if (m[0] !== 'c' + i) sureWrong++; }
+  ds.push([res[0].d.toFixed(3), (res[1].d - res[0].d).toFixed(3)].join('/'));
+  if (m[0] === 'c' + i) small1++; if (m.includes('c' + i)) small5++;
+  const one = FP.topMatches(FP.fingerprint(cropTo(a, { x: FP.MARGIN * base, y: FP.MARGIN * base, w: base, h: base })), refs, 5).map(x => x.card.id);
+  if (one.includes('c' + i)) single5++;
+}
+// 7. seuils de confiance du scan auto : vraie carte vs fond vide
+const noCard = FP.search(c => FP.fingerprint(cropTo(area(null, { x: 0, y: 0, w: 0, h: 0 }, 5), c)), refs, 5);
+console.log('fond vide : meilleur', noCard[0].d.toFixed(3), 'écart', (noCard[1].d - noCard[0].d).toFixed(3), '-> sûr ?', FP.isSure(noCard));
+assert(!FP.isSure(noCard), 'fond vide pris pour une carte');
+console.log(`carte petite/décalée : top1 ${small1}/30, top5 ${small5}/30 (sans multi-cadrage : top5 ${single5}/30)`);
+console.log(`auto : sûr ${sure}/30, dont faux ${sureWrong}`, ds.join(' '));
+assert(small5 >= 27, 'multi-cadrage insuffisant');
+assert(sureWrong === 0, 'proposition auto fausse');
 console.log('OK');

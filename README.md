@@ -10,7 +10,7 @@ Données et prix Cardmarket : [TCGdex](https://tcgdex.dev).
 
 ## Utiliser
 - **Collection** → choisir une extension → *Activer le scan* (télécharge empreintes + prix, à faire une fois par extension, en wifi).
-- **Scan** → cadrer la carte dans le rectangle jaune → *Scanner* → toucher la bonne carte parmi les 5 proposées.
+- **Scan** → poser la carte dans le rectangle jaune : reconnaissance automatique, toucher la carte proposée pour l'ajouter (5 choix si doute après 3 s). Image anglaise utilisée si l'image FR manque.
 - Toucher une carte (classeur, toast après scan) pour régler variante, état, quantité, note (1ère éd., Shadowless, tampon, PSA…).
 - **Stats** → valeur, doublons, coefficients de prix par état, export CSV, sauvegarde / restauration.
 
