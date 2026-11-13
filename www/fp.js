@@ -182,7 +182,7 @@
     return { trend: t == null ? null : t * k, avg: a == null ? null : a * k };
   }
 
-  function entryKey(e) { return [e.cardId, e.variant, e.cond, e.note || '', e.paid ?? ''].join('|'); }
+  function entryKey(e) { return [e.cardId, e.variant, e.cond, e.note || '', e.paid ?? '', e.grade ? [e.grade.co, e.grade.g, e.grade.cert].join('/') : ''].join('|'); }
 
   // Ajoute (ou fusionne) une entrée dans la collection, renvoie la collection
   function addEntry(coll, e) {
@@ -208,11 +208,11 @@
 
   function toCSV(coll, prices, coef) {
     const esc = v => { v = v == null ? '' : String(v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-    const rows = [['Extension', 'Numero', 'Nom', 'Variante', 'Etat', 'Quantite', 'Note', 'Prix tendance (EUR)', 'Prix moyen (EUR)', 'ID']];
+    const rows = [['Extension', 'Numero', 'Nom', 'Variante', 'Etat', 'Quantite', 'Note', 'Prix tendance (EUR)', 'Prix moyen (EUR)', 'ID', 'Gradation', 'Etiquettes']];
     for (const e of coll) {
       const u = unitPrice(prices[e.cardId], e.variant, e.cond, coef);
       const f = n => n == null ? '' : n.toFixed(2).replace('.', ',');
-      rows.push([e.setName, e.localId, e.name, e.variant, e.cond, e.qty, e.note, f(u.trend), f(u.avg), e.cardId]);
+      rows.push([e.setName, e.localId, e.name, e.variant, e.cond, e.qty, e.note, f(u.trend), f(u.avg), e.cardId, e.grade ? `${e.grade.co} ${e.grade.g}${e.grade.cert ? ' #' + e.grade.cert : ''}` : '', (e.tags || []).join(', ')]);
     }
     // ";" + virgule décimale = ouverture directe dans Excel FR
     return '﻿' + rows.map(r => r.map(esc).join(';')).join('\r\n');

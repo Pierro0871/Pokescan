@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "test": "node test/fp.test.js && node test/logic.test.js && node test/vision.test.js",
-    "vendor": "mkdir -p www/vendor && cp node_modules/@techstark/opencv-js/dist/opencv.js node_modules/tesseract.js/dist/tesseract.min.js node_modules/tesseract.js/dist/worker.min.js node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js www/vendor/ && gunzip -c node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz > www/vendor/eng.traineddata && cp node_modules/pokemon/data/fr.json www/vendor/pokedex-fr.json"
+    "vendor": "mkdir -p www/vendor && cp node_modules/@techstark/opencv-js/dist/opencv.js node_modules/tesseract.js/dist/tesseract.min.js node_modules/tesseract.js/dist/worker.min.js node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js www/vendor/ && gunzip -c node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz > www/vendor/eng.traineddata && cp node_modules/pokemon/data/fr.json www/vendor/pokedex-fr.json && cp node_modules/qrcode-generator/dist/qrcode.js node_modules/jsqr/dist/jsQR.js www/vendor/"
   },
   "dependencies": {
     "@capacitor/android": "8.6.2",
@@ -12,9 +12,11 @@
     "@capacitor/share": "8.0.3",
     "@techstark/opencv-js": "5.0.0-release.1",
     "@tesseract.js-data/eng": "1.0.0",
+    "jsqr": "1.4.0",
+    "pokemon": "3.3.1",
+    "qrcode-generator": "2.0.4",
     "tesseract.js": "7.0.0",
-    "tesseract.js-core": "7.0.0",
-    "pokemon": "3.3.1"
+    "tesseract.js-core": "7.0.0"
   },
   "devDependencies": {
     "@capacitor/cli": "8.6.2"

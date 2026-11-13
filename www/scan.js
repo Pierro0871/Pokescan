@@ -3,7 +3,7 @@
 
 // ---------- scan automatique ----------
 const A = { timer: 0, res: null, qs: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, track: null, torch: false,
-  variant: 'normal', mode: 'one', session: [], booster: null };
+  variant: 'normal', mode: 'one', session: [], booster: null, auto: false, grade: null };
 let CV = null; // OpenCV, chargé en arrière-plan (13 Mo)
 function cvReady() {
   if (!CV && window.cv && !cvReady.p) cvReady.p = Promise.resolve(window.cv).then(m => { CV = m; });
@@ -89,21 +89,63 @@ function ocrWorker() {
   const u = f => new URL('vendor/' + f, location.href).href;
   return ocrP ||= Tesseract.createWorker('eng', 1, {
     workerPath: u('worker.min.js'), corePath: u('tesseract-core-simd-lstm.wasm.js'), langPath: u(''), gzip: false, workerBlobURL: false, cacheMethod: 'none'
-  }).then(async w => { await w.setParameters({ tessedit_char_whitelist: '0123456789/', tessedit_pageseg_mode: '11' }); return w; })
-    .catch(() => (ocrP = null));
+  }).catch(() => (ocrP = null));
+}
+// Un seul moteur OCR partagé : chaque lecture fixe ses réglages et passe à son tour
+let ocrQ = Promise.resolve();
+function ocr(canvas, params) {
+  const run = ocrQ.then(async () => {
+    const w = await ocrWorker(); if (!w) return '';
+    await w.setParameters(params);
+    return (await w.recognize(canvas)).data.text;
+  });
+  ocrQ = run.catch(() => { });
+  return run;
+}
+// Morceau de l'image redressée (lignes y0..y0+bh) -> canvas agrandi ×2, gris contrasté
+function strip(px, w, y0, bh) {
+  const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = bh;
+  tmp.getContext('2d').putImageData(new ImageData(px.slice(y0 * w * 4, (y0 + bh) * w * 4), w, bh), 0, 0);
+  const c = document.createElement('canvas'); c.width = w * 2; c.height = bh * 2;
+  const ctx = c.getContext('2d'); ctx.filter = 'grayscale(1) contrast(1.6)'; ctx.drawImage(tmp, 0, 0, c.width, c.height);
+  return c;
 }
 async function readNumber(hi, w, h) {
-  const worker = await ocrWorker();
-  if (!worker) return null;
-  // bande du bas de la carte (numéro à gauche sur les cartes récentes, à droite sur les anciennes), agrandie ×2
-  const y0 = Math.round(h * 0.9), bh = Math.round(h * 0.09), c = document.createElement('canvas');
-  c.width = w * 2; c.height = bh * 2;
-  const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = bh;
-  tmp.getContext('2d').putImageData(new ImageData(hi.slice(y0 * w * 4, (y0 + bh) * w * 4), w, bh), 0, 0);
-  const ctx = c.getContext('2d'); ctx.filter = 'grayscale(1) contrast(1.6)'; ctx.drawImage(tmp, 0, 0, c.width, c.height);
-  try { return VISION.parseNumber((await worker.recognize(c)).data.text); } catch { return null; }
+  if (!window.Tesseract) return null;
+  // bande du bas de la carte (numéro à gauche sur les cartes récentes, à droite sur les anciennes)
+  try { return VISION.parseNumber(await ocr(strip(hi, w, Math.round(h * 0.9), Math.round(h * 0.09)), { tessedit_char_whitelist: '0123456789/', tessedit_pageseg_mode: '11' })); } catch { return null; }
+}
+async function readLabel(px, w, h) {
+  if (!window.Tesseract) return {};
+  try { return VISION.parseGrade(await ocr(strip(px, w, 0, h), { tessedit_char_whitelist: '', tessedit_pageseg_mode: '6' })); } catch { return {}; }
 }
 const officialOf = id => S.catalog?.flatMap(s => s.sets).find(s => s.id === id)?.cardCount?.official ?? S.fpCards.find(c => c.setId === id)?.official;
+
+// Boîtier gradé : la carte est la forme (parmi celles trouvées) qui ressemble le plus à une carte connue ;
+// l'étiquette est la bande au-dessus de la carte.
+async function passGraded(cv, v, cr) {
+  const sw = 480, sh = Math.round(480 * cr.h / cr.w), small = grab(v, cr.x, cr.y, cr.w, cr.h, sw, sh);
+  const found = VISION.findCards(cv, small, sw, sh, 0.05);
+  if (!found.length) { drawQuads([], cr); return { list: [], sure: false, plausible: false }; }
+  const k = cr.w / sw, bw = Math.min(1200, Math.round(cr.w)), bh = Math.round(bw * cr.h / cr.w), kb = bw / cr.w;
+  const big = grab(v, cr.x, cr.y, cr.w, cr.h, bw, bh);
+  let best = null;
+  for (const f of found) {
+    const qb = f.q.map(p => ({ x: p.x * k * kb, y: p.y * k * kb }));
+    const img = VISION.warp(cv, big, bw, bh, qb, 126, 176);
+    const qs = FP.nearCrops().map(c => FP.fingerprint(FP.resample(img, 126, 176, c)));
+    const res = FP.rank(qs, S.fpCards).slice(0, 5);
+    if (!best || res[0].d < best.res[0].d) best = { res, qs, qb, f };
+  }
+  drawQuads([best.f.q.map(p => ({ x: p.x * k, y: p.y * k }))], cr);
+  const [tl, tr, br, bl] = best.qb, up = { x: tl.x - bl.x, y: tl.y - bl.y };
+  const at = (p, t) => ({ x: p.x + up.x * t, y: p.y + up.y * t });
+  const label = VISION.warp(cv, big, bw, bh, [at(tl, 0.36), at(tr, 0.36), at(tr, 0.04), at(tl, 0.04)], 600, 220);
+  const g = await readLabel(label, 600, 220);
+  A.grade = { ...(A.grade || {}), ...g }; // on garde ce qui a déjà été lu sur les passes précédentes
+  const dec = FP.decide(best.qs, best.res, S.fpCards, null, officialOf);
+  return { ...dec, plausible: best.res[0].d < FP.LOOSE_MAX };
+}
 
 // Une passe de scan. Renvoie { list, sure } ou null.
 async function pass() {
@@ -111,6 +153,7 @@ async function pass() {
   if (!v.videoWidth || !S.fpCards.length) return null;
   const cr = captureRect();
   const cv = cvReady();
+  if (cv && A.mode === 'graded') return passGraded(cv, v, cr);
   if (cv) {
     // détection sur une petite image, redressement depuis l'image pleine résolution
     const sw = 480, sh = Math.round(480 * cr.h / cr.w), small = grab(v, cr.x, cr.y, cr.w, cr.h, sw, sh);
@@ -143,7 +186,7 @@ async function pass() {
 
 async function loop() {
   if (S.view !== 'scan') return;
-  if (!A.paused && $('#sheet').hidden && A.mode === 'one') {
+  if (!A.paused && $('#sheet').hidden && A.mode !== 'page') {
     let r = null;
     try { r = await pass(); } catch (err) { console.error(err); }
     if (r && r.list.length && !A.paused && S.view === 'scan') {
@@ -152,7 +195,9 @@ async function loop() {
       $('#guide').classList.toggle('searching', r.plausible);
       if (A.hold) { // attend que la carte précédente sorte du cadre
         if (top !== A.hold || !r.plausible) A.hold = null; else status('Retire la carte pour scanner la suivante');
-      } else if (r.sure && top === A.lastTop) { propose(true); } // sûr sur 2 passes de suite
+      } else if (r.sure && top === A.lastTop) { // sûr sur 2 passes de suite
+        if (A.auto && A.mode === 'one') choose(r.list[0].card); else propose(true);
+      }
       else if (r.plausible) {
         status(r.sure ? 'Presque…' : 'Recherche…');
         A.doubtSince ||= Date.now();
@@ -165,25 +210,47 @@ async function loop() {
 }
 
 function resume(holdId) {
+  A.grade = null;
   A.hold = holdId; A.paused = false; A.doubtSince = 0; A.lastTop = null;
   $('#matches').innerHTML = ''; status();
 }
 
-function choose(c) {
-  addFromScan(c);
+function choose(c, fromEl) {
+  const extra = A.mode === 'graded' && A.grade?.grade ? { grade: { co: A.grade.co || '?', g: A.grade.grade, cert: A.grade.cert || '' } } : {};
+  addFromScan(c, extra);
   feedback('add');
+  flyToCollection(imgOf(c), (fromEl || $('#guide')).getBoundingClientRect());
+  A.grade = null;
   const cam = $('#cam'); cam.classList.remove('flash'); void cam.offsetWidth; cam.classList.add('flash');
   resume(A.res[0].card.id === c.id ? c.id : A.res[0].card.id);
   toast(`Ajouté : <b>${esc(c.name)}</b> (${esc(c.setName)} ${esc(c.localId)}) — touche pour modifier`, () => openCard(c));
 }
 
 // Ajout depuis le scan : variante choisie, session en cours, booster en cours
-function addFromScan(c) {
-  const e = addCard(c, { variant: A.variant });
+function addFromScan(c, extra = {}) {
+  const e = addCard(c, { variant: A.variant, ...extra });
   A.session.unshift({ c, variant: A.variant, t: Date.now() });
   if (A.booster) { A.booster.cards.push(c.id); kv.set('boosters', S.boosters); }
   renderSession();
   return e;
+}
+
+// Animation : la carte est aspirée vers l'onglet Collection
+function flyToCollection(src, from) {
+  const tab = $('#tabs [data-view=coll]');
+  if (!src || !tab || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const to = tab.getBoundingClientRect(), im = document.createElement('img');
+  im.src = src; im.className = 'fly';
+  Object.assign(im.style, { left: from.left + 'px', top: from.top + 'px', width: from.width + 'px', height: from.height + 'px' });
+  document.body.appendChild(im);
+  const dx = to.left + to.width / 2 - (from.left + from.width / 2), dy = to.top + to.height / 2 - (from.top + from.height / 2);
+  const a = im.animate([
+    { transform: 'translate(0,0) scale(1) rotate(0deg)', opacity: 1, filter: 'brightness(1)' },
+    { transform: 'translate(0,-14px) scale(1.08) rotate(-6deg)', opacity: 1, filter: 'brightness(1.5)', offset: 0.2 },
+    { transform: `translate(${dx * 0.55}px,${dy * 0.45}px) scale(.45) rotate(240deg)`, opacity: .9, offset: 0.65 },
+    { transform: `translate(${dx}px,${dy}px) scale(.05) rotate(600deg)`, opacity: .3 },
+  ], { duration: 800, easing: 'cubic-bezier(.55,0,.85,.35)' });
+  a.onfinish = () => { im.remove(); tab.classList.remove('bump'); void tab.offsetWidth; tab.classList.add('bump'); };
 }
 
 // ---------- session de scan ----------
@@ -231,17 +298,26 @@ function propose(sure) {
   if (sure) feedback('found');
   const res = A.res, box = $('#matches'), list = sure ? res.slice(0, 1) : res;
   status(sure ? 'Carte reconnue' : 'Pas sûr : choisis la bonne carte');
+  const g = A.mode === 'graded' ? A.grade || {} : null;
   box.innerHTML = (sure ? '' : '<p class="muted">Touche la bonne carte pour l\'ajouter :</p>') + list.map((m, i) => `
     <button class="match ${sure ? 'sure' : ''}" data-i="${i}">
       ${imgOf(m.card) ? `<img src="${esc(imgOf(m.card))}" alt="">` : ''}
       <span class="grow"><b>${esc(m.card.name)}</b><br><span class="muted">${esc(m.card.setName)} · n° ${esc(m.card.localId)}</span>${sure ? '<br><span class="add">Toucher pour ajouter</span>' : ''}</span>
     </button>`).join('') + `
+    ${g ? `<div class="row gradebox"><span>🏷️ Étiquette lue :</span>
+      <select id="g-co">${['PSA', 'PCA', 'CGC', 'BGS', 'CCC', 'SGC', 'ACE', 'TAG', '?'].map(x => `<option ${x === (g.co || '?') ? 'selected' : ''}>${x}</option>`).join('')}</select>
+      <input id="g-g" type="number" min="1" max="10" step="0.5" value="${g.grade ?? ''}" placeholder="Note" class="num">
+      <input id="g-cert" value="${esc(g.cert || '')}" placeholder="N° certificat" class="grow"></div>` : ''}
     <div class="row">
       ${sure ? '<button class="ghost" id="other">Pas celle-là</button>' : '<button class="ghost" id="notfound">Aucune : chercher par nom</button>'}
       <button class="ghost" id="retry">Réessayer</button>
     </div>
     <p class="muted small">Le scan ne connaît que les extensions activées : ${esc(S.fpSets.map(setName).join(', '))}.</p>`;
-  box.querySelectorAll('.match').forEach(b => b.onclick = () => choose(list[+b.dataset.i].card));
+  if (g) {
+    const upd = () => { const n = parseFloat($('#g-g').value); A.grade = { co: $('#g-co').value, grade: isFinite(n) ? n : undefined, cert: $('#g-cert').value.trim() }; };
+    ['#g-co', '#g-g', '#g-cert'].forEach(sel => $(sel).onchange = upd);
+  }
+  box.querySelectorAll('.match').forEach(b => b.onclick = () => choose(list[+b.dataset.i].card, b.querySelector('img') || b));
   $('#retry').onclick = () => resume(res[0].card.id);
   if (sure) $('#other').onclick = () => propose(false);
   else $('#notfound').onclick = () => { resume(res[0].card.id); show('poke'); $('#search-q')?.focus(); };
@@ -323,7 +399,10 @@ function bindScanUI() {
     $('#cam').classList.toggle('page', A.mode === 'page'); $('#matches').innerHTML = ''; drawQuads([], { x: 0, y: 0 });
     $('#btn-scan').textContent = A.mode === 'page' ? 'Analyser la page' : 'Choisir manuellement';
     $('#btn-scan').className = A.mode === 'page' ? 'primary big' : 'ghost big';
-    A.paused = false; status(A.mode === 'page' ? 'Cadre toute la page du classeur, puis Analyser' : '');
+    $('#cam').classList.toggle('graded', A.mode === 'graded'); A.grade = null; A.hold = null;
+    A.paused = false; status({ page: 'Cadre toute la page du classeur, puis Analyser', graded: 'Cadre le boîtier entier, étiquette en haut' }[A.mode] || '');
   });
   $('#quick-form').onsubmit = e => { e.preventDefault(); quickAdd($('#quick-q').value); };
+  kv.get('autoadd').then(v => { A.auto = !!v; $('#auto').checked = A.auto; });
+  $('#auto').onchange = e => { A.auto = e.target.checked; kv.set('autoadd', A.auto); toast(A.auto ? 'Ajout auto : les cartes reconnues avec certitude s\'ajoutent seules' : 'Ajout auto désactivé'); };
 }

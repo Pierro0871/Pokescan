@@ -140,6 +140,62 @@
     ];
   }
 
-  const api = { norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
+  // ---------- decks ----------
+  const BASIC_ENERGY = /^(energie|energy) (plante|feu|eau|electrique|psy|combat|obscurite|metal|fee|grass|fire|water|lightning|psychic|fighting|darkness|metal|fairy)( de base)?$|^basic .* energy$/;
+  const isEnergy = c => /energ/.test(norm(c.category));
+  const isBasicEnergy = c => isEnergy(c) && (norm(c.energyType) === 'normal' || BASIC_ENERGY.test(norm(c.name)));
+  const kind = c => isEnergy(c) ? 'energy' : /pokemon/.test(norm(c.category)) ? 'pokemon' : 'trainer';
+  // cards : [{ id, name, category, energyType, stage, legal, n }] ; format : 'standard' | 'expanded'
+  function deckCheck(cards, format = 'standard') {
+    const counts = { pokemon: 0, trainer: 0, energy: 0 }, byName = {}, errors = [];
+    let total = 0;
+    for (const c of cards) {
+      total += c.n; counts[kind(c)] += c.n;
+      if (!isBasicEnergy(c)) byName[norm(c.name)] = (byName[norm(c.name)] || 0) + c.n;
+    }
+    if (total !== 60) errors.push(`${total}/60 cartes`);
+    for (const [n, k] of Object.entries(byName)) if (k > 4) errors.push(`${k} × « ${cards.find(c => norm(c.name) === n).name} » (4 maximum)`);
+    const illegal = cards.filter(c => c.legal && c.legal[format] === false);
+    if (illegal.length) errors.push(`${illegal.length} carte(s) non autorisée(s) en ${format === 'standard' ? 'Standard' : 'Étendu'}`);
+    const basics = cards.filter(c => kind(c) === 'pokemon' && /base|basic/.test(norm(c.stage)));
+    if (cards.some(c => c.stage) && !basics.length) errors.push('aucun Pokémon de base');
+    return { total, counts, errors, illegal: illegal.map(c => c.id), ok: !errors.length };
+  }
+
+  // ---------- échange par QR : listes d'IDs compactes ----------
+  // "sv01-001,sv01-002,sv01-003,sv01-TG05" -> "sv01:001-003,TG05" (plages sur les numéros de même largeur)
+  function encodeIds(ids) {
+    const by = {};
+    for (const id of ids) { const i = id.lastIndexOf('-'); if (i > 0 && !id.startsWith('perso-')) (by[id.slice(0, i)] ||= []).push(id.slice(i + 1)); }
+    return Object.entries(by).map(([set, locs]) => {
+      const num = locs.filter(l => /^\d+$/.test(l)).sort((a, b) => a - b || a.length - b.length), other = locs.filter(l => !/^\d+$/.test(l)), out = [];
+      for (let i = 0; i < num.length;) {
+        let j = i;
+        while (j + 1 < num.length && +num[j + 1] === +num[j] + 1 && num[j + 1].length === num[i].length) j++;
+        out.push(j > i ? `${num[i]}-${num[j]}` : num[i]); i = j + 1;
+      }
+      return set + ':' + [...out, ...other].join(',');
+    }).join(';');
+  }
+  function decodeIds(str) {
+    const ids = [];
+    for (const part of String(str).split(';')) {
+      const k = part.lastIndexOf(':'); if (k < 1) continue;
+      const set = part.slice(0, k);
+      for (const tok of part.slice(k + 1).split(',')) {
+        const m = tok.match(/^(\d+)-(\d+)$/);
+        if (m) for (let n = +m[1]; n <= +m[2] && n - +m[1] < 1000; n++) ids.push(set + '-' + String(n).padStart(m[1].length, '0'));
+        else if (tok) ids.push(set + '-' + tok);
+      }
+    }
+    return ids;
+  }
+  // Ce que chacun peut donner à l'autre : doublons de l'un absents chez l'autre
+  function trades(me, friend) {
+    const give = friend.dups.filter(id => !me.owned.has(id)), get = me.dups.filter(id => !friend.owned.has(id));
+    return { theyCanGive: give, iCanGive: get };
+  }
+
+  const api = { deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
   if (typeof module !== 'undefined') module.exports = api; else root.LOGIC = api;
 })(this);

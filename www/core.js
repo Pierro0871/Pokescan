@@ -150,7 +150,7 @@ function defaultVariant(c) {
 }
 function rememberMeta(d) {
   if (!d?.id || !('dexId' in d || 'illustrator' in d || 'types' in d)) return; // fiche complète de l'API seulement
-  S.meta[d.id] = { r: d.rarity || '', t: d.types || [], i: d.illustrator || '', d: d.dexId || [], c: d.category || '' };
+  S.meta[d.id] = { r: d.rarity || '', t: d.types || [], i: d.illustrator || '', d: d.dexId || [], c: d.category || '', s: d.stage || '', e: d.energyType || '', l: d.legal || null, n: d.name };
   clearTimeout(rememberMeta.t); rememberMeta.t = setTimeout(() => kv.set('meta', S.meta), 1000);
 }
 
@@ -175,6 +175,8 @@ function toast(html, onTap) {
   t.onclick = () => { t.hidden = true; onTap && onTap(); };
   clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 3500);
 }
+
+const allTags = () => [...new Set(S.coll.flatMap(e => e.tags || []))].sort((a, b) => a.localeCompare(b));
 
 // ---------- catalogue des extensions ----------
 async function loadCatalog(withDates = true) {
@@ -261,7 +263,7 @@ async function openCard(c, onClose) {
   if (c.id.startsWith('perso-')) return;
   try { // rafraîchit prix, variantes et infos si en ligne
     const d = await getJSON('/cards/' + encodeURIComponent(c.id));
-    c.variants = d.variants; c.rarity = d.rarity; c.illustrator = d.illustrator;
+    c.variants = d.variants; c.rarity = d.rarity; c.illustrator = d.illustrator; c.name = d.name || c.name; c.image ||= d.image;
     rememberMeta(d);
     if (d.pricing?.cardmarket) { S.prices[c.id] = d.pricing.cardmarket; kv.set('prices', S.prices); }
     if (!$('#sheet').hidden && S.sheetCard === c) renderCard(c);
@@ -299,7 +301,14 @@ function renderCard(c) {
           <label>Payé (€/u) <input data-k="paid" type="number" min="0" step="0.1" value="${e.paid ?? ''}" class="num"></label>
           <span class="grow"></span><span class="price">${eur(FP.unitPrice(p, e.variant, e.cond, S.coef).trend)}</span>
         </div>
+        <div class="row small">
+          <span>Gradée</span>
+          <select data-g="co"><option value="">non</option>${['PSA', 'PCA', 'CGC', 'BGS', 'CCC', 'SGC', 'ACE', 'TAG', '?'].map(x => `<option ${e.grade?.co === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+          ${e.grade ? `<input data-g="g" type="number" min="1" max="10" step="0.5" value="${e.grade.g ?? ''}" placeholder="Note" class="num"><input data-g="cert" value="${esc(e.grade.cert || '')}" placeholder="N° certificat" class="grow">` : ''}
+        </div>
+        <div class="row small"><input data-k="tags" list="tag-list" value="${esc((e.tags || []).join(', '))}" placeholder="Étiquettes : deck, cadeau, préférée…" class="grow"></div>
       </div>`).join('') || '<p class="muted">Pas encore dans ta collection.</p>'}
+    <datalist id="tag-list">${allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
     <div class="row"><button class="primary" id="add">+ Ajouter un exemplaire</button><button class="ghost" id="close">Fermer</button></div>`;
   $('#sheet').hidden = false;
   $('#cm') && ($('#cm').onclick = () => openExternal(`https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${encodeURIComponent(c.name + ' ' + c.localId)}`));
@@ -315,7 +324,14 @@ function renderCard(c) {
     const e = S.coll[+row.dataset.i];
     row.querySelectorAll('[data-k]').forEach(inp => inp.onchange = () => {
       if (inp.dataset.k === 'paid') { const v = parseFloat(inp.value); if (isFinite(v) && v >= 0) e.paid = v; else delete e.paid; }
+      else if (inp.dataset.k === 'tags') { const t = [...new Set(inp.value.split(',').map(x => x.trim()).filter(Boolean))]; if (t.length) e.tags = t; else delete e.tags; }
       else e[inp.dataset.k] = inp.value;
+      save();
+    });
+    row.querySelectorAll('[data-g]').forEach(inp => inp.onchange = () => {
+      const k = inp.dataset.g;
+      if (k === 'co') { if (!inp.value) delete e.grade; else e.grade = { g: null, cert: '', ...e.grade, co: inp.value }; save(); return renderCard(c); }
+      if (k === 'g') { const v = parseFloat(inp.value); e.grade.g = isFinite(v) ? v : null; } else e.grade.cert = inp.value.trim();
       save();
     });
     row.querySelectorAll('.qty').forEach(b => b.onclick = () => {

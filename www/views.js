@@ -6,6 +6,7 @@ function show(v) {
   $$('.view').forEach(el => el.hidden = el.id !== 'view-' + v);
   $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   if (v === 'scan') { startCam(); renderSession(); } else stopCam();
+  if (v !== 'boost') stopQR();
   if (v === 'coll') renderColl();
   if (v === 'poke') renderPoke();
   if (v === 'boost') renderBoost();
@@ -35,6 +36,7 @@ function renderColl() {
       <select id="cf-year"><option value="">Toutes années</option>${years.map(y => `<option ${f.year === y ? 'selected' : ''}>${y}</option>`).join('')}</select>
     </div>
     <div class="row">${[['', 'Toutes'], ['started', 'Commencées'], ['done', 'Complètes'], ['none', 'Pas commencées'], ['scan', 'Scan activé']].map(([k, l]) => `<button class="chip ${f.state === k ? 'on' : ''}" data-st="${k}">${l}</button>`).join('')}</div>
+    ${allTags().length ? `<div class="row tagrow"><span class="muted small">🏷️</span>${allTags().map(t => `<button class="chip tag" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
     <button class="setrow" id="perso"><span class="sym">✍️</span><span class="grow"><b>Mes cartes perso</b><br><span class="muted small">Cartes absentes de la base, ajoutées à la main</span></span><span class="count">${persoN}</span></button>
     <div id="cf-list"></div>
     <div class="col"><button id="dl-all" class="ghost">Tout télécharger pour le hors ligne…</button>
@@ -66,6 +68,7 @@ function renderColl() {
   $('#cf-year').onchange = e => { f.year = e.target.value; list(); };
   $$('[data-st]').forEach(b => b.onclick = () => { f.state = b.dataset.st; $$('[data-st]').forEach(x => x.classList.toggle('on', x === b)); list(); });
   $('#perso').onclick = openPerso;
+  $$('[data-tag]').forEach(b => b.onclick = () => openTag(b.dataset.tag));
   $('#refresh-cat').onclick = () => loadCatalog().then(() => toast('Liste à jour')).catch(err => toast('Erreur : ' + esc(err.message)));
   $('#dl-all').onclick = downloadAll;
 }
@@ -141,6 +144,22 @@ async function openSet(id, filter = 'all', mode = S.setMode || 'grid', page = 0)
   });
 }
 function backToList() { $('#view-coll').dataset.set = ''; renderColl(); }
+
+// ---------- étiquette : toutes les cartes qui la portent ----------
+function openTag(tag) {
+  const el = $('#view-coll'), owned = ownedIds();
+  S.redrawColl = () => openTag(tag);
+  const es = S.coll.filter(e => (e.tags || []).includes(tag));
+  const cards = Object.values(Object.fromEntries(es.map(e => [e.cardId, { id: e.cardId, localId: e.localId, name: e.name, image: e.image, photo: e.photo, setId: e.setId, setName: e.setName }])));
+  const val = es.reduce((a, e) => a + (FP.unitPrice(S.prices[e.cardId], e.variant, e.cond, S.coef).trend || 0) * e.qty, 0);
+  el.innerHTML = `<button class="ghost" id="back">← Extensions</button><h1>🏷️ ${esc(tag)}</h1>
+    <p class="muted">${es.reduce((a, e) => a + e.qty, 0)} carte(s) · ${eur(val)}</p>
+    <button class="ghost" id="vit">✨ Voir en vitrine</button>
+    ${grid(cards, owned, c => c.name)}`;
+  $('#back').onclick = backToList;
+  $('#vit').onclick = () => openVitrine(cards);
+  $$('#view-coll .cell').forEach(b => b.onclick = () => openCard({ ...cards.find(c => c.id === b.dataset.id) }, () => openTag(tag)));
+}
 
 // ---------- cartes perso ----------
 function openPerso() {
@@ -240,9 +259,9 @@ function renderIllus() {
 function renderBoost(tab = S.boostTab || 'sim') {
   S.boostTab = tab;
   const el = $('#view-boost');
-  el.innerHTML = `<h1>Boosters</h1><div class="row tabs2">${[['sim', 'Booster fictif'], ['real', 'Mes ouvertures']].map(([k, l]) => `<button class="chip ${tab === k ? 'on' : ''}" data-bt="${k}">${l}</button>`).join('')}</div><div id="boost-body"></div>`;
-  $$('[data-bt]').forEach(b => b.onclick = () => renderBoost(b.dataset.bt));
-  (tab === 'sim' ? renderSim : renderReal)();
+  el.innerHTML = `<h1>Fun</h1><div class="row tabs2">${[['sim', 'Booster fictif'], ['real', 'Mes ouvertures'], ['decks', 'Decks'], ['vitrine', 'Vitrine'], ['trade', 'Échange']].map(([k, l]) => `<button class="chip ${tab === k ? 'on' : ''}" data-bt="${k}">${l}</button>`).join('')}</div><div id="boost-body"></div>`;
+  $$('[data-bt]').forEach(b => b.onclick = () => { stopQR(); renderBoost(b.dataset.bt); });
+  ({ sim: renderSim, real: renderReal, decks: renderDecks, vitrine: renderVitrineMenu, trade: renderTrade })[tab]();
 }
 const setOptions = (sel, onlyReady) => allSets().filter(s => !onlyReady || S.fpSets.includes(s.id))
   .map(s => `<option value="${esc(s.id)}" ${sel === s.id ? 'selected' : ''}>${esc(s.name)}${S.fpSets.includes(s.id) ? '' : ' (non téléchargée)'}</option>`).join('');
@@ -361,7 +380,7 @@ function renderStats() {
   $('#share-img').onclick = shareImage;
   const day = today();
   $('#csv').onclick = () => saveFile(`pokescan-${day}.csv`, FP.toCSV(S.coll, S.prices, S.coef), 'text/csv');
-  $('#bak').onclick = () => saveFile(`pokescan-sauvegarde-${day}.json`, JSON.stringify({ app: 'PokeScan', version: 2, date: new Date().toISOString(), coll: S.coll, coef: S.coef, prices: S.prices, hist: S.hist, valhist: S.valhist, boosters: S.boosters }), 'application/json');
+  $('#bak').onclick = () => saveFile(`pokescan-sauvegarde-${day}.json`, JSON.stringify({ app: 'PokeScan', version: 2, date: new Date().toISOString(), coll: S.coll, coef: S.coef, prices: S.prices, hist: S.hist, valhist: S.valhist, boosters: S.boosters, decks: S.decks }), 'application/json');
   $('#imp').onclick = () => $('#import-file').click();
   $('#hist-more') && ($('#hist-more').onclick = () => { S.histN = (S.histN || 30) + 50; renderStats(); });
 }
@@ -446,7 +465,13 @@ async function importBackup(ev) {
       && e.variant in VARIANTS && FP.CONDS.includes(e.cond) && (e.paid == null || typeof e.paid === 'number') && (e.photo == null || /^data:image\//.test(e.photo));
     if (d.app !== 'PokeScan' || !Array.isArray(d.coll) || !d.coll.every(okEntry)) throw new Error('fichier non reconnu');
     if (!confirm(`Remplacer ta collection actuelle (${S.coll.length} lignes) par la sauvegarde du ${new Date(d.date).toLocaleDateString('fr-FR')} (${d.coll.length} lignes) ?`)) return;
-    S.coll = d.coll.map(e => ({ ...e, note: String(e.note || ''), name: String(e.name || ''), localId: String(e.localId || '') }));
+    S.coll = d.coll.map(e => {
+      const x = { ...e, note: String(e.note || ''), name: String(e.name || ''), localId: String(e.localId || '') };
+      if (x.tags != null) x.tags = Array.isArray(x.tags) ? x.tags.filter(t => typeof t === 'string').slice(0, 20) : undefined;
+      if (x.grade != null && (typeof x.grade !== 'object' || typeof x.grade.co !== 'string')) delete x.grade;
+      return x;
+    });
+    if (Array.isArray(d.decks)) { S.decks = d.decks; kv.set('decks', S.decks); }
     if (d.coef) S.coef = { ...FP.DEFAULT_COEF, ...d.coef };
     if (d.prices && typeof d.prices === 'object') S.prices = { ...d.prices, ...S.prices };
     if (Array.isArray(d.hist)) S.hist = d.hist;
@@ -497,7 +522,7 @@ async function init() {
   S.fpSets = await g('fpsets', []);
   S.thumbSets = await g('thumbsets', []);
   S.meta = await g('meta', {}); S.hist = await g('hist', []); S.valhist = await g('valhist', {});
-  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto');
+  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []);
   applyTheme(); matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
   for (const id of S.fpSets) S.fpCards.push(...((await kv.get('fp:' + id)) || []));
   $$('#tabs button').forEach(b => b.onclick = () => show(b.dataset.view));

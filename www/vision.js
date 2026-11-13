@@ -103,6 +103,21 @@
     return m ? { num: +m[1], tot: +m[2] } : null;
   }
 
-  const api = { findCard, findCards, orderCorners, warp, median, parseNumber };
+  // Étiquette de boîtier gradé -> { co: 'PSA', grade: 10, cert: '12345678' } (champs absents si illisibles)
+  function parseGrade(text) {
+    const t = String(text).toUpperCase().replace(/[|]/g, 'I');
+    const co = (t.match(/\b(PSA|PCA|CGC|BGS|BECKETT|CCC|SGC|ACE|AOG|TAG)\b/) || [])[1];
+    const out = {};
+    if (co) out.co = co === 'BECKETT' ? 'BGS' : co;
+    // note : après un libellé connu (GEM MT 10, MINT 9, PRISTINE 10…) sinon nombre isolé 1-10 (demi-points)
+    const m = t.match(/(?:GEM\s*M(?:IN)?T|PRISTINE|MINT|NM-MT|NM|EX-MT|EX|VG-EX|VG|GOOD|FAIR|POOR|PERFECT|GEM)\s*\+?\s*(10|[1-9](?:[.,]5)?)\b/)
+      || t.match(/(?:^|\s)(10|[1-9](?:[.,]5)?)(?=\s|$)/);
+    if (m) out.grade = parseFloat(m[1].replace(',', '.'));
+    const c = t.match(/\b(\d{7,12})\b/);
+    if (c) out.cert = c[1];
+    return out;
+  }
+
+  const api = { parseGrade, findCard, findCards, orderCorners, warp, median, parseNumber };
   if (typeof module !== 'undefined') module.exports = api; else root.VISION = api;
 })(this);

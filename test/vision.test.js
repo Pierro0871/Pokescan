@@ -98,3 +98,12 @@ Promise.resolve(require('@techstark/opencv-js')).then(cv => {
   assert(!FP.decide([refs[0].fp], [{ card: b, d: 0.3 }, { card: a, d: 0.31 }], [a, b], null, () => 0).sure);
   console.log('OK');
 });
+{
+  const V2 = require('../www/vision.js');
+  const eq = (a, b) => require('assert').deepStrictEqual(a, b);
+  eq(V2.parseGrade('2023 POKEMON SV\nCHARIZARD EX\nGEM MT 10\n84512345 PSA'), { co: 'PSA', grade: 10, cert: '84512345' });
+  eq(V2.parseGrade('PCA  9.5  NM+ 1234567'), { co: 'PCA', grade: 9.5, cert: '1234567' });
+  eq(V2.parseGrade('CGC PRISTINE 10'), { co: 'CGC', grade: 10 });
+  eq(V2.parseGrade('rien de lisible'), {});
+  console.log('OK étiquettes gradées');
+}

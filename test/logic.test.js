@@ -56,3 +56,23 @@ assert.strictEqual(L.drawBooster(cards.slice(0, 3).map(c => ({ ...c, rarity: 'Au
 const ach = L.achievements({ qty: 150, unique: 120, value: 99.9, setsDone: 1, species: 80, kanto: 40, dups: 3, boosters: 0, maxCard: 12 });
 assert.deepStrictEqual(ach.filter(a => a.done).map(a => a.id), ['first', 'c100', 'set1']);
 console.log('OK');
+
+// ---------- v6 ----------
+{
+  const mk = (name, category, n, extra = {}) => ({ id: name + n, name, category, n, ...extra });
+  const ok = [mk('Pikachu', 'Pokémon', 4, { stage: 'De base' }), mk('Raichu', 'Pokémon', 4, { stage: 'Niveau 1' }), mk('Recherches Professorales', 'Dresseur', 4),
+    mk('Énergie Électrique de base', 'Énergie', 48, { energyType: 'Normal' })];
+  const r = L.deckCheck(ok);
+  assert(r.ok, JSON.stringify(r.errors)); assert.deepStrictEqual(r.counts, { pokemon: 8, trainer: 4, energy: 48 });
+  const bad = L.deckCheck([mk('Pikachu', 'Pokémon', 5, { stage: 'De base', legal: { standard: false, expanded: true } }), mk('Pikachu', 'Pokémon', 1, { stage: 'De base' })]);
+  assert(!bad.ok && bad.errors.some(e => e.includes('6/60')) && bad.errors.some(e => e.includes('6 × « Pikachu »')) && bad.errors.some(e => e.includes('Standard')));
+  assert(L.deckCheck(bad ? [mk('Pikachu', 'Pokémon', 4, { stage: 'De base', legal: { standard: false, expanded: true } })] : [], 'expanded').illegal.length === 0);
+
+  const ids = ['sv01-001', 'sv01-002', 'sv01-003', 'sv01-010', 'sv01-TG05', 'base1-1', 'base1-2', 'base1-4', 'swsh12.5-GG01', 'perso-123'];
+  const enc = L.encodeIds(ids);
+  assert.strictEqual(enc, 'sv01:001-003,010,TG05;base1:1-2,4;swsh12.5:GG01');
+  assert.deepStrictEqual(L.decodeIds(enc).sort(), ids.filter(i => !i.startsWith('perso')).sort());
+  const t = L.trades({ owned: new Set(['a', 'b', 'c']), dups: ['b'] }, { owned: new Set(['c', 'd', 'e']), dups: ['c', 'd'] });
+  assert.deepStrictEqual(t, { theyCanGive: ['d'], iCanGive: ['b'] });
+  console.log('OK v6 logique');
+}

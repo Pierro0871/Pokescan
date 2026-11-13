@@ -11,7 +11,7 @@
 <main>
   <section id="view-scan" class="view">
     <div class="row seg" role="group" aria-label="Mode de scan">
-      <button class="chip on" data-mode="one">1 carte</button><button class="chip" data-mode="page">Page de classeur</button>
+      <button class="chip on" data-mode="one">1 carte</button><button class="chip" data-mode="page">Page</button><button class="chip" data-mode="graded">Gradée</button>
       <span class="grow"></span>
       <button class="chip on" data-var="normal">Normale</button><button class="chip" data-var="reverse">Reverse</button><button class="chip" data-var="holo">Holo</button>
     </div>
@@ -22,6 +22,7 @@
       <button id="torch" class="torch" hidden aria-label="Lampe torche">🔦</button>
       <p id="cam-msg"></p>
     </div>
+    <label class="row small autorow"><input type="checkbox" id="auto"> Ajout auto (sans confirmer les cartes sûres)</label>
     <div id="session"></div>
     <div id="matches"></div>
     <button id="btn-scan" class="ghost big">Choisir manuellement</button>
@@ -43,12 +44,13 @@
   <button data-view="scan" class="on"><span>📷</span>Scan</button>
   <button data-view="coll"><span>🗂️</span>Collection</button>
   <button data-view="poke"><span>🔎</span>Pokémon</button>
-  <button data-view="boost"><span>🎁</span>Boosters</button>
+  <button data-view="boost"><span>🎲</span>Fun</button>
   <button data-view="stats"><span>📊</span>Stats</button>
 </nav>
 
 <div id="sheet" hidden><div id="sheet-box"></div></div>
 <div id="toast" hidden></div>
+<div id="vitrine" hidden></div>
 <input id="import-file" type="file" accept="application/json,.json" hidden>
 
 <script src="version.js"></script>
@@ -59,6 +61,9 @@
 <script async src="vendor/opencv.js"></script>
 <script src="core.js"></script>
 <script src="scan.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/jsQR.js"></script>
 <script src="views.js"></script>
+<script src="fun.js"></script>
 </body>
 </html>

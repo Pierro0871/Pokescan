@@ -57,7 +57,7 @@ assert.strictEqual(st.qty, 3); assert.strictEqual(st.unique, 1);
 assert.deepStrictEqual(st.dups, [{ id: 'sv1-1', extra: 2 }]);
 assert(Math.abs(st.trend - 2.8) < 1e-9);
 const csv = FP.toCSV(coll, { 'sv1-1': { trend: 1.5, avg: 2 } }, FP.DEFAULT_COEF);
-assert(csv.split('\r\n')[1] === 'Écarlate et Violet;1;Pomdepik;normal;NM;2;;1,50;2,00;sv1-1', csv);
+assert(csv.split('\r\n')[1] === 'Écarlate et Violet;1;Pomdepik;normal;NM;2;;1,50;2,00;sv1-1;;', csv);
 assert(FP.toCSV([{ ...e, note: 'a;b "c"' }], {}, FP.DEFAULT_COEF).includes('"a;b ""c"""'));
 // 6. carte plus petite et décalée dans le cadre (fond bois autour) : les cadrages multiples la retrouvent
 function area(shapes, cr, seed) { // zone capturée AW×AH (RGBA), carte placée dans le rectangle cr (fractions), fond bois
