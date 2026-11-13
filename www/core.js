@@ -67,7 +67,29 @@ const allSets = () => (S.catalog || []).flatMap(s => s.sets.map(st => ({ ...st, 
 const setInfo = id => allSets().find(s => s.id === id);
 const setName = id => id === 'perso' ? 'Cartes perso' : setInfo(id)?.name || id;
 const setIdOf = c => c.set?.id || c.setId || c.id.slice(0, c.id.length - String(c.localId).length - 1);
-const imgOf = (c, q = 'low') => c.photo || (q === 'low' && S.thumbs[c.id || c.cardId]) || (c.image ? `${c.image}/${q}.webp` : '');
+const imgOf = (c, q = 'low') => c.photo || (q === 'low' && S.thumbs[c.id || c.cardId]) || (c.image ? `${c.image}/${q}.webp` : guessImg(c, q));
+// Pas d'image dans la base (promos récentes…) : on tente l'adresse habituelle, puis l'anglais et le japonais (voir imgErr)
+function guessImg(c, q = 'low') {
+  const sid = c.setId || (c.id && c.localId != null ? setIdOf(c) : ''), st = sid && setInfo(sid);
+  return st && c.localId ? `https://assets.tcgdex.net/fr/${st.serie}/${sid}/${c.localId}/${q}.webp` : '';
+}
+const imgBases = (c, sid) => { const st = setInfo(sid); return st ? ['fr', 'en', 'ja'].map(l => `https://assets.tcgdex.net/${l}/${st.serie}/${sid}/${c.localId}`) : []; };
+// Image introuvable : langue suivante (fr -> en -> ja), puis adresses de secours (data-alt), sinon on la masque
+function imgErr(im) {
+  const src = im.getAttribute('src') || '', m = src.match(/assets\.tcgdex\.net\/(fr|en|ja)\//), next = m && { fr: 'en', en: 'ja' }[m[1]];
+  if (next) { im.src = src.replace(`/${m[1]}/`, `/${next}/`); return; }
+  const alt = (im.dataset.alt || '').split('|').filter(Boolean);
+  if (alt.length) { im.dataset.alt = alt.slice(1).join('|'); im.src = alt[0]; return; }
+  im.classList.add('broken');
+  if (im.parentElement?.classList.contains('cell') && im.alt) im.insertAdjacentHTML('afterend', `<span class="noimg">${esc(im.alt)}</span>`);
+}
+document.addEventListener('error', e => { if (e.target.tagName === 'IMG') imgErr(e.target); }, true);
+// Logo d'une extension (symbole en secours)
+function setLogo(st, cls = 'logo') {
+  const logo = st.logo ? st.logo + '.png' : `https://assets.tcgdex.net/fr/${st.serie}/${st.id}/logo.png`;
+  const sym = st.symbol ? st.symbol + '.png' : `https://assets.tcgdex.net/univ/${st.serie}/${st.id}/symbol.png`;
+  return `<img class="${cls}" src="${esc(logo)}" data-alt="${esc(sym)}" alt="" loading="lazy">`;
+}
 
 // ---------- collection : sauvegarde, annuler/refaire, historique ----------
 const undo = [], redo = [];
@@ -230,9 +252,12 @@ async function downloadSet(set, onProg) {
     if (!c.image) { // image FR absente (ex. promos récentes) : même illustration en anglais
       try { card.image = (await getJSON('/cards/' + encodeURIComponent(c.id), 'en')).image; } catch { }
     }
-    if (card.image) {
+    // dernier recours : adresses habituelles des images (fr, en, ja)
+    const bases = card.image ? [card.image] : imgBases(c, set.id);
+    let img = null;
+    for (const b of bases) { try { img = await getImage(b + '/low.webp'); card.image = b; break; } catch { } }
+    if (img) {
       try {
-        const img = await getImage(card.image + '/low.webp');
         ctx.drawImage(img, 0, 0, FP.W, FP.H);
         card.fp = FP.fingerprint(ctx.getImageData(0, 0, FP.W, FP.H).data);
         tc.getContext('2d').drawImage(img, 0, 0, 126, 176);
@@ -252,6 +277,18 @@ async function downloadSet(set, onProg) {
   S.fpCards = S.fpCards.filter(c => c.setId !== set.id).concat(out);
   afterChange();
   return noImg;
+}
+// Miniatures seules (extension déjà téléchargée avant leur arrivée) : sans retélécharger prix et empreintes
+async function addThumbs(setId, onProg) {
+  const cards = (await kv.get('fp:' + setId)) || [], thumbs = {}, tc = document.createElement('canvas');
+  tc.width = 126; tc.height = 176;
+  let done = 0;
+  await pool(cards.filter(c => c.image), 6, async c => {
+    try { tc.getContext('2d').drawImage(await getImage(c.image + '/low.webp'), 0, 0, 126, 176); thumbs[c.id] = tc.toDataURL('image/webp', 0.7); } catch { }
+    onProg && onProg(++done, cards.length);
+  });
+  await kv.set('thumb:' + setId, thumbs); Object.assign(S.thumbs, thumbs);
+  if (!S.thumbSets.includes(setId)) { S.thumbSets.push(setId); await kv.set('thumbsets', S.thumbSets); }
 }
 async function loadThumbs(setId) { if (S.thumbSets.includes(setId)) Object.assign(S.thumbs, (await kv.get('thumb:' + setId)) || {}); }
 
@@ -284,7 +321,9 @@ function renderCard(c) {
       ${perso ? `<label class="small">Prix estimé (€) <input id="perso-price" type="number" min="0" step="0.5" value="${p?.trend ?? ''}"></label>`
       : `<table class="prices"><tr><th></th><th>Tendance</th><th>Moyen</th></tr>${line('normal')}${p && p['trend-holo'] != null ? line('reverse') : ''}</table>
       <p class="muted small">Cardmarket, Near Mint${p?.updated ? ' · ' + new Date(p.updated).toLocaleDateString('fr-FR') : ''}${p ? '' : ' · pas de prix connu'}${ch != null ? ` · <span class="${ch >= 0 ? 'up' : 'down'}">${pct(ch)} sur 7 j</span>` : ''}</p>
-      <button class="ghost small" id="cm">Voir sur Cardmarket ↗</button>`}</div>
+      <button class="ghost small" id="cm">Voir sur Cardmarket ↗</button>`}
+      ${oddsHTML(c)}
+      <button class="ghost small" id="v3d">🔮 Vue 3D</button></div>
     </div>
     <h2>Mes exemplaires (${entries.reduce((a, e) => a + e.qty, 0)})</h2>
     ${entries.map(e => `
@@ -311,6 +350,7 @@ function renderCard(c) {
     <datalist id="tag-list">${allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
     <div class="row"><button class="primary" id="add">+ Ajouter un exemplaire</button><button class="ghost" id="close">Fermer</button></div>`;
   $('#sheet').hidden = false;
+  $('#v3d').onclick = () => open3D(c);
   $('#cm') && ($('#cm').onclick = () => openExternal(`https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${encodeURIComponent(c.name + ' ' + c.localId)}`));
   $('#perso-price') && ($('#perso-price').onchange = e => {
     const v = parseFloat(e.target.value);
@@ -340,6 +380,20 @@ function renderCard(c) {
       S.coll = S.coll.filter(x => x.qty > 0); save(); renderCard(c);
     });
   });
+}
+
+// Chance de tirer la carte dans un booster (extension téléchargée : raretés connues)
+function oddsHTML(c) {
+  const sid = c.setId || setIdOf(c), cards = S.fpCards.filter(x => x.setId === sid);
+  if (c.id.startsWith('perso-')) return '';
+  if (!cards.length) return '<p class="muted small">🎲 Active le scan de l\'extension pour voir la chance de tirer cette carte.</p>';
+  const st = setInfo(sid), promo = /promo|mcdo|mcdonald/.test(norm(st?.name) + ' ' + norm(st?.serieName));
+  const o = LOGIC.packOdds(cards.map(x => ({ ...x, rarity: x.rarity ?? S.meta[x.id]?.r })), c.id, promo);
+  if (!o || !o.any) return '';
+  const one = p => p >= 0.5 ? Math.round(p * 100) + ' %' : '1 sur ' + Math.round(1 / p);
+  return `<div class="odds"><b>🎲 Chance par booster : ${one(o.any)}</b>
+    <span>${o.reverse ? `normale ${one(o.normal)} · reverse ${one(o.reverse)} · ` : ''}50 % de chance en ${o.packs50} booster(s), 90 % en ${o.packs90}</span>
+    <small>Estimation (taux officiels non publiés)</small></div>`;
 }
 
 function closeSheet() {

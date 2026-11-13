@@ -243,3 +243,65 @@ function showTrades(p) {
     <p class="muted small">Prix connus seulement pour les cartes des extensions téléchargées.</p>`;
   $$('#qr-box .cell').forEach(b => b.onclick = () => openCard({ ...[...give, ...get].find(c => c.id === b.dataset.id) }, null));
 }
+
+// ---------- vue 3D d'une carte, avec l'effet de sa finition ----------
+const FX = { none: 'Standard', reverse: 'Reverse (brillant hors illustration)', holo: 'Holo (illustration brillante)', fullart: 'Full art / illustration (carte entière brillante, texturée)', gold: 'Or / hyper rare' };
+function fxFor(tier, variant) {
+  if (tier >= 5) return 'gold';
+  if (tier === 4) return 'fullart';
+  if (variant === 'reverse') return 'reverse';
+  if (variant === 'holo' || tier === 3) return 'holo';
+  return 'none';
+}
+function open3D(c) {
+  const v = $('#viewer');
+  const tier = LOGIC.rarityTier(S.meta[c.id]?.r ?? c.rarity ?? '');
+  let variant = S.coll.find(e => e.cardId === c.id)?.variant || 'normal';
+  let rx = -8, ry = -18, vx = 0, vy = 0, drag = null, gx = 0, gy = 0, raf = 0, flip = 0;
+  v.hidden = false;
+  const draw = () => {
+    const fx = fxFor(tier, variant);
+    v.innerHTML = `<button class="vclose" aria-label="Fermer">✕</button>
+      <div class="s3d"><div class="c3d">
+        <div class="face front fx-${fx}">${imgOf(c, 'high') ? `<img src="${esc(imgOf(c, 'high'))}" alt="${esc(c.name)}" draggable="false">` : `<span class="noimg">${esc(c.name)}</span>`}<i class="foil"></i><i class="spark"></i><i class="glare"></i></div>
+        <div class="face edge e1"></div><div class="face edge e2"></div>
+        <div class="face back"></div>
+      </div></div>
+      <div class="vcap"><b>${esc(c.name)}</b><span>${esc(FX[fx])}${S.meta[c.id]?.r ? ' · ' + esc(S.meta[c.id].r) : ''}</span>
+        <div class="row center3d">${Object.entries(VARIANTS).map(([k, l]) => `<button class="chip ${variant === k ? 'on' : ''}" data-v3="${k}">${l}</button>`).join('')}</div>
+        <small>Fais glisser pour tourner · double-tape pour retourner · penche le téléphone</small></div>`;
+    v.querySelector('.vclose').onclick = close;
+    v.querySelectorAll('[data-v3]').forEach(b => b.onclick = e => { e.stopPropagation(); variant = b.dataset.v3; draw(); });
+  };
+  const frame = () => {
+    if (!drag) { // inertie, puis léger balancement
+      vx *= 0.94; vy *= 0.94; ry += vy; rx += vx;
+      const t = performance.now() / 1000;
+      if (Math.abs(vx) + Math.abs(vy) < 0.05) { ry += (Math.sin(t * 0.7) * 14 - 10 + flip - ry) * 0.02; rx += (Math.sin(t * 0.9) * 6 - 6 - rx) * 0.02; }
+    }
+    const RX = rx + gy, RY = ry + gx;
+    v.style.setProperty('--rx', RX.toFixed(2) + 'deg'); v.style.setProperty('--ry', RY.toFixed(2) + 'deg');
+    const a = (RY % 360 + 360) % 360, sx = Math.sin(a * Math.PI / 180), sy = Math.sin(RX * Math.PI / 180);
+    v.style.setProperty('--px', (50 + sx * 60).toFixed(1) + '%'); v.style.setProperty('--py', (50 - sy * 80).toFixed(1) + '%');
+    raf = requestAnimationFrame(frame);
+  };
+  const down = e => { if (e.target.closest('button')) return; drag = { x: e.clientX, y: e.clientY, t: performance.now() }; v.setPointerCapture?.(e.pointerId); };
+  const move = e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    ry += dx * 0.5; rx -= dy * 0.4; vy = dx * 0.25; vx = -dy * 0.2;
+    drag.x = e.clientX; drag.y = e.clientY;
+  };
+  const up = () => { drag = null; };
+  let lastTap = 0;
+  const tap = e => { if (e.target.closest('button')) return; const t = Date.now(); if (t - lastTap < 300) { flip += 180; vy = 9; } lastTap = t; };
+  const ori = e => { if (e.gamma == null) return; gx = Math.max(-25, Math.min(25, e.gamma)) * 0.8; gy = -Math.max(-25, Math.min(25, e.beta - 45)) * 0.6; };
+  function close() {
+    cancelAnimationFrame(raf); v.hidden = true; v.innerHTML = '';
+    v.removeEventListener('pointerdown', down); v.removeEventListener('pointermove', move); v.removeEventListener('pointerup', up); v.removeEventListener('click', tap);
+    removeEventListener('deviceorientation', ori);
+  }
+  v.addEventListener('pointerdown', down); v.addEventListener('pointermove', move); v.addEventListener('pointerup', up); v.addEventListener('click', tap);
+  addEventListener('deviceorientation', ori);
+  draw(); frame();
+}

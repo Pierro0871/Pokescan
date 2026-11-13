@@ -76,3 +76,19 @@ console.log('OK');
   assert.deepStrictEqual(t, { theyCanGive: ['d'], iCanGive: ['b'] });
   console.log('OK v6 logique');
 }
+
+// probabilité de tirage : le calcul colle à la simulation de drawBooster
+{
+  let sd = 3; const rnd2 = () => (sd = (sd * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  const set = [...Array(100)].map((_, i) => ({ id: 'y' + i, rarity: i < 50 ? 'Commune' : i < 80 ? 'Peu Commune' : i < 90 ? 'Rare' : i < 96 ? 'Double rare' : i < 99 ? 'Ultra Rare' : 'Hyper rare' }));
+  const N = 60000, hit = {};
+  for (let k = 0; k < N; k++) for (const id of new Set(L.drawBooster(set, rnd2).map(x => x.card.id))) hit[id] = (hit[id] || 0) + 1;
+  for (const id of ['y0', 'y60', 'y85', 'y92', 'y97', 'y99']) {
+    const o = L.packOdds(set, id), sim = (hit[id] || 0) / N;
+    assert(Math.abs(o.any - sim) < Math.max(0.004, sim * 0.15), `${id} calcul ${o.any} vs simulation ${sim}`);
+  }
+  const o = L.packOdds(set, 'y99');
+  assert(o.packs50 > 30 && o.packs90 > o.packs50);
+  assert.strictEqual(L.packOdds(set.slice(0, 2).map(c => ({ ...c, rarity: 'Aucune' })), 'y0', true).any, 1);
+  console.log('OK probabilités');
+}

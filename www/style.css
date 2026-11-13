@@ -162,3 +162,37 @@ input.num { width: 80px; flex: none !important; }
 .vcard .glare { position: absolute; inset: 0; mix-blend-mode: overlay; background: radial-gradient(circle at var(--px) var(--py), rgba(255,255,255,.75), transparent 45%); }
 .vcap { margin-top: 26px; text-align: center; display: flex; flex-direction: column; gap: 4px; animation: rise .4s ease-out; } .vcap span, .vcap small { color: #b9bfcc; }
 @keyframes vin { from { opacity: 0; transform: scale(.85) rotateY(-30deg); } }
+/* ---- v8 : logos, images de secours, probabilités, vue 3D ---- */
+img.broken { visibility: hidden; }
+.setrow img.logo { width: 64px; height: 30px; object-fit: contain; flex: none; }
+.biglogo { display: block; max-width: 70%; max-height: 80px; object-fit: contain; margin: 10px 0 0; }
+.odds { margin: 8px 0; padding: 8px 10px; border-radius: 10px; background: var(--card); display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.odds span, .odds small { color: var(--muted); } .odds small { font-size: 11px; }
+#viewer { position: fixed; inset: 0; z-index: 45; touch-action: none; user-select: none; background: radial-gradient(circle at 50% 30%, #23263a, #050608 72%); color: #fff;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; --rx: 0deg; --ry: 0deg; --px: 50%; --py: 50%; }
+#viewer[hidden] { display: none; }
+.s3d { perspective: 1100px; }
+.c3d { position: relative; width: min(74vw, 56vh * 63 / 88); aspect-ratio: 63 / 88; transform-style: preserve-3d; transform: rotateX(var(--rx)) rotateY(var(--ry)); }
+.c3d .face { position: absolute; inset: 0; border-radius: 4.6% / 3.3%; overflow: hidden; backface-visibility: hidden; }
+.c3d .front { transform: translateZ(1.6px); box-shadow: 0 0 0 1px rgba(255,255,255,.08); }
+.c3d .front img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.c3d .edge { background: #cfc8b0; } .c3d .e1 { transform: translateZ(.5px); } .c3d .e2 { transform: translateZ(-.5px) rotateY(180deg); }
+.c3d .back { transform: rotateY(180deg) translateZ(1.6px); background: repeating-linear-gradient(45deg, #1a1d24 0 10px, #232733 10px 20px); border: 6px solid var(--acc); box-sizing: border-box; }
+.c3d .back::after { content: 'PokeScan'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--acc); font-weight: 800; font-size: 22px; transform: rotate(-30deg); }
+.c3d i { position: absolute; inset: 0; pointer-events: none; }
+.c3d .glare { mix-blend-mode: overlay; background: radial-gradient(circle at var(--px) var(--py), rgba(255,255,255,.8), rgba(255,255,255,0) 50%); }
+.c3d .foil, .c3d .spark { display: none; }
+.c3d .foil { background-image: repeating-linear-gradient(110deg, hsl(0 100% 65%) 0%, hsl(60 100% 65%) 5%, hsl(140 100% 60%) 10%, hsl(200 100% 65%) 15%, hsl(280 100% 70%) 20%, hsl(0 100% 65%) 25%);
+  background-size: 400% 400%; background-position: var(--px) var(--py); mix-blend-mode: color-dodge; opacity: .55; filter: saturate(1.2); }
+.c3d .spark { background-image: radial-gradient(circle, rgba(255,255,255,.9) 0 1px, transparent 1.6px), radial-gradient(circle, rgba(255,255,255,.6) 0 1px, transparent 1.4px);
+  background-size: 23px 19px, 31px 37px; background-position: calc(var(--px) * .6) calc(var(--py) * .5), calc(var(--px) * -.4) var(--py); mix-blend-mode: overlay; opacity: .8; }
+/* reverse : tout brille sauf la fenêtre d'illustration */
+.fx-reverse .foil { display: block; clip-path: polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, 8% 10%, 92% 10%, 92% 49%, 8% 49%, 8% 10%); }
+/* holo : seule l'illustration brille */
+.fx-holo .foil { display: block; clip-path: inset(10% 8% 51% 8% round 1%); opacity: .7; }
+/* full art / illustration rare : toute la carte, avec texture */
+.fx-fullart .foil, .fx-fullart .spark { display: block; } .fx-fullart .foil { opacity: .45; }
+/* or / hyper rare */
+.fx-gold .foil, .fx-gold .spark { display: block; }
+.fx-gold .foil { background-image: linear-gradient(115deg, #7a5a12 0%, #f7e08a 25%, #b8892b 45%, #fff4c2 60%, #a87a1f 80%, #f2d36b 100%); background-size: 300% 300%; mix-blend-mode: soft-light; opacity: .85; }
+.center3d { justify-content: center; } .center3d .chip { color: #fff; border-color: rgba(255,255,255,.3); } .center3d .chip.on { background: #fff; color: #111; }

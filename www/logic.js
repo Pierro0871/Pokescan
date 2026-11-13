@@ -119,6 +119,36 @@
     return out;
   }
 
+  // Probabilité d'obtenir une carte dans un booster (même modèle que drawBooster)
+  // -> { normal, reverse, any, tier, packs50, packs90 } ; null si la carte n'est pas dans la liste
+  function packOdds(cards, id, isPromo = false) {
+    const c = cards.find(x => x.id === id);
+    if (!c) return null;
+    const tiers = [0, 1, 2, 3, 4, 5].map(t => cards.filter(x => rarityTier(x.rarity) === t).length);
+    const t = rarityTier(c.rarity);
+    let normal = 0, reverse = 0;
+    if (isPromo || !tiers[0] || !tiers[1]) normal = Math.min(4, cards.length) / cards.length;
+    else {
+      if (t === 0) normal = 1 - Math.pow(1 - 1 / tiers[0], 4);
+      else if (t === 1) normal = 1 - Math.pow(1 - 1 / tiers[1], 3);
+      else if (t >= 2) {
+        // tirage de la case rare, avec repli vers le niveau inférieur si vide
+        const slot = [0, 0, 0, 0, 0, 0];
+        for (const [want, w] of [[5, 0.02], [4, 0.08], [3, 0.20], [2, 0.70]]) {
+          let k = want; while (k > 2 && !tiers[k]) k--;
+          if (!tiers[k]) k = [2, 3, 4, 5, 1].find(x => tiers[x]);
+          slot[k] += w;
+        }
+        normal = slot[t] / tiers[t];
+      }
+      const low = tiers[0] + tiers[1] + tiers[2];
+      if (t >= 0 && t <= 2) reverse = 1 - Math.pow(1 - 1 / low, 2);
+    }
+    const any = 1 - (1 - normal) * (1 - reverse);
+    const packs = q => any > 0 ? Math.ceil(Math.log(1 - q) / Math.log(1 - Math.min(any, 0.999999))) : Infinity;
+    return { normal, reverse, any, tier: t, packs50: packs(0.5), packs90: packs(0.9) };
+  }
+
   // ---------- succès ----------
   // s : { qty, unique, value, setsDone, species, dups, boosters, maxCard, scans }
   function achievements(s) {
@@ -196,6 +226,6 @@
     return { theyCanGive: give, iCanGive: get };
   }
 
-  const api = { deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
+  const api = { packOdds, deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
   if (typeof module !== 'undefined') module.exports = api; else root.LOGIC = api;
 })(this);

@@ -14,7 +14,7 @@ function show(v) {
 }
 const grid = (cards, owned, label = c => c.localId) => `<div class="grid">${cards.map(c => `
   <button class="cell ${owned.has(c.id) ? '' : 'miss'}" data-id="${esc(c.id)}">
-    ${imgOf(c) ? `<img src="${esc(imgOf(c))}" loading="lazy" alt="">` : `<span class="noimg">${esc(c.name)}</span>`}
+    ${imgOf(c) ? `<img src="${esc(imgOf(c))}" loading="lazy" alt="${esc(c.name)}">` : `<span class="noimg">${esc(c.name)}</span>`}
     <small>${esc(label(c))}</small></button>`).join('')}</div>`;
 
 // ---------- Collection : liste des extensions ----------
@@ -53,7 +53,7 @@ function renderColl() {
       ${g.sets.map(st => {
         const n = cnt[st.id] || 0, tot = LOGIC.total(st), p = Math.round(LOGIC.progress(st, cnt) * 100);
         return `<button class="setrow" data-set="${esc(st.id)}">
-          ${st.symbol ? `<img src="${esc(st.symbol)}.png" alt="" loading="lazy">` : '<span class="sym"></span>'}
+          ${setLogo(st)}
           <span class="grow"><b>${esc(st.name)}</b>${S.fpSets.includes(st.id) ? ' <span class="ok">scan ✓</span>' : ''}${p === 100 ? ' <span class="ok">★</span>' : ''}
           <span class="muted small">${esc([st.releaseDate && st.releaseDate !== '0000' ? st.releaseDate.slice(0, 4) : '', f.sort !== 'serie' ? st.serieName : ''].filter(Boolean).join(' · '))}</span>
           <span class="bar"><i style="width:${p}%"></i></span></span>
@@ -86,7 +86,7 @@ async function downloadAll() {
     if (S.dlAll.stop) break;
     i++;
     const msg = (d, t) => { const p = $('#dl-all-prog'); if (p) p.textContent = `Extension ${i}/${todo.length} : ${st.name} (${d}/${t})… Retouche le bouton pour arrêter.`; };
-    try { await downloadSet(await getSet(st.id), msg); } catch { }
+    try { if (S.fpSets.includes(st.id)) await addThumbs(st.id, msg); else await downloadSet(await getSet(st.id), msg); } catch { }
   }
   S.dlAll = null;
   const p = $('#dl-all-prog'); if (p) p.textContent = '';
@@ -111,6 +111,7 @@ async function openSet(id, filter = 'all', mode = S.setMode || 'grid', page = 0)
   const pages = Math.max(1, Math.ceil(shown.length / 9)); page = Math.min(page, pages - 1);
   el.innerHTML = `
     <button class="ghost" id="back">← Extensions</button>
+    ${setInfo(id) ? setLogo(setInfo(id), 'biglogo') : ''}
     <h1>${esc(set.name)}</h1>
     <p class="muted">${n} / ${set.cardCount?.official ?? cards.length} cartes (${cards.length} au total avec les secrètes)${set.releaseDate ? ' · sortie ' + new Date(set.releaseDate).toLocaleDateString('fr-FR') : ''}</p>
     ${v.known ? `<div class="kpis three"><div><b>${eur(v.have)}</b><span>ma valeur</span></div><div><b>${eur(v.all)}</b><span>extension complète</span></div><div><b>${eur(v.missing)}</b><span>pour compléter</span></div></div>
