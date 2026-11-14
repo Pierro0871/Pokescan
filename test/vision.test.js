@@ -129,3 +129,15 @@ Promise.resolve(require('@techstark/opencv-js')).then(cv => {
   a.strictEqual(V4.sheen([0, 1, 2].map(() => frame(() => false)), w, h), null);
   console.log('OK reflets');
 }
+{
+  const V5 = require('../www/vision.js'), a = require('assert'), w = 126, h = 176;
+  const solid = (r, g, b) => { const f = new Uint8ClampedArray(w * h * 4); for (let i = 0; i < w * h; i++) { f[i * 4] = r; f[i * 4 + 1] = g; f[i * 4 + 2] = b; f[i * 4 + 3] = 255; } return f; };
+  const best = t => Object.entries(t.scores).sort((x, y) => y[1] - x[1])[0][0];
+  a.strictEqual(best(V5.typeScores(solid(90, 160, 220), w, h)), 'eau');
+  a.strictEqual(best(V5.typeScores(solid(220, 80, 50), w, h)), 'feu');
+  a.strictEqual(best(V5.typeScores(solid(110, 180, 80), w, h)), 'plante');
+  a.strictEqual(best(V5.typeScores(solid(240, 210, 60), w, h)), 'electrique');
+  a.strictEqual(V5.typeKey('Électrique'), 'electrique'); a.strictEqual(V5.typeKey('Water'), 'eau');
+  const q1 = V5.quality(solid(128, 128, 128), w, h); a(q1.sharp < 1 && Math.abs(q1.bright - 128) < 1 && q1.glare === 0);
+  console.log('OK couleur/type, qualité');
+}

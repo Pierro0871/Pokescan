@@ -293,6 +293,26 @@ async function downloadSet(set, onProg) {
   afterChange();
   return noImg;
 }
+// Empreintes sans « couleur fine » (anciennes versions) : recalculées depuis les miniatures, sans réseau
+async function upgradeFps() {
+  const c = document.createElement('canvas'); c.width = FP.W; c.height = FP.H;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  let n = 0;
+  for (const id of [...S.fpSets]) {
+    const cards = (await kv.get(LK('fp:' + id))) || [];
+    if (!cards.some(x => x.fp && !x.fp.k)) continue;
+    const thumbs = (await kv.get(LK('thumb:' + id))) || {};
+    for (const card of cards) {
+      if (!card.fp || card.fp.k || !thumbs[card.id]) continue;
+      try { ctx.drawImage(await getImage(thumbs[card.id]), 0, 0, FP.W, FP.H); card.fp = FP.fingerprint(ctx.getImageData(0, 0, FP.W, FP.H).data); n++; } catch { }
+    }
+    await kv.set(LK('fp:' + id), cards);
+    S.fpCards = S.fpCards.filter(x => x.setId !== id).concat(cards);
+    await new Promise(r => setTimeout(r, 50)); // laisse respirer l'appli entre deux extensions
+  }
+  return n;
+}
+
 // Miniatures seules (extension déjà téléchargée avant leur arrivée) : sans retélécharger prix et empreintes
 async function addThumbs(setId, onProg) {
   const cards = (await kv.get(LK('fp:' + setId))) || [], thumbs = {}, tc = document.createElement('canvas');

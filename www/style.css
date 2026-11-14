@@ -234,3 +234,10 @@ img.broken { visibility: hidden; }
 #camprop .muted { color: #b6bccb; } #camprop .ghost { border-color: rgba(255,255,255,.25); color: #eef0f4; }
 #camprop .row { margin: 6px 0 0; } #camprop p { margin: 2px 4px 6px; }
 #camprop .gradebox { background: rgba(255,255,255,.06); }
+/* ---- v15 ---- */
+.conf { display: block; height: 6px; border-radius: 3px; background: rgba(255,255,255,.15); margin: 6px 0 2px; overflow: hidden; }
+.conf i { display: block; height: 100%; background: linear-gradient(90deg, #ff6b6b, #ffcb05 50%, #3ecf8e); background-size: 200% 100%; border-radius: 3px; }
+#zoom { position: absolute; right: 6px; top: 70px; bottom: 70px; width: 28px; z-index: 4; writing-mode: vertical-lr; direction: rtl; accent-color: var(--acc); }
+#zoom[hidden] { display: none; }
+.focusring { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; border: 2px solid var(--acc); border-radius: 50%; z-index: 4; pointer-events: none; animation: focusr .9s ease-out forwards; }
+@keyframes focusr { from { transform: scale(1.6); opacity: 0; } 30% { transform: scale(1); opacity: 1; } to { opacity: 0; } }

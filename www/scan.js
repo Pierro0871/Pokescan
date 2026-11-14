@@ -19,7 +19,13 @@ async function startCam() {
       v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
       await v.play();
       A.track = v.srcObject.getVideoTracks()[0];
-      $('#torch').hidden = !A.track.getCapabilities?.().torch; A.torch = false; $('#torch').classList.remove('on');
+      const caps = A.track.getCapabilities?.() || {};
+      $('#torch').hidden = !caps.torch; A.torch = false; $('#torch').classList.remove('on');
+      if (caps.focusMode?.includes('continuous')) A.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => { });
+      const z = $('#zoom');
+      z.hidden = !caps.zoom || caps.zoom.max <= caps.zoom.min;
+      if (!z.hidden) { z.min = caps.zoom.min; z.max = caps.zoom.max; z.step = caps.zoom.step || 0.1; z.value = A.track.getSettings?.().zoom ?? caps.zoom.min; }
+      A.caps = caps;
     } catch (err) { return status('Caméra indisponible : ' + err.message); }
   }
   clearTimeout(A.timer); loop();
@@ -207,8 +213,17 @@ async function pass() {
       A.frames = moved ? [lo] : [...A.frames.slice(-2), lo]; A.corners = qv;
       const img = VISION.median(A.frames), flip = rot180(img);
       A.sheen = VISION.sheen(A.frames, 126, 176);
+      // conseils de prise de vue : flou, sombre, reflet, carte coupée ou trop petite
+      const qual = VISION.quality(lo, 126, 176), area = Math.abs((qv[1].x - qv[0].x) * (qv[3].y - qv[0].y)) / (cr.w * cr.h);
+      const edge = qv.some(p => p.x < cr.w * 0.01 || p.y < cr.h * 0.01 || p.x > cr.w * 0.99 || p.y > cr.h * 0.99);
+      A.tip = qual.sharp < SHARP_MIN ? '🔍 Trop flou : tiens le téléphone immobile' : qual.bright < 55 ? '🌙 Trop sombre : allume la lampe 🔦' : qual.glare > 0.04 ? '✨ Reflet sur la carte : incline un peu le téléphone'
+        : edge ? '✂️ Carte coupée : recule un peu' : area < 0.2 ? '🔎 Rapproche-toi de la carte' : '';
+      A.quality = qual;
+      if (qual.sharp < SHARP_MIN) { DIAG.last = { edges: true, res: [], num: null, sure: false }; drawDebug(qv, cr); return { list: [], sure: false, plausible: true, blurry: true }; }
+      A.lastWarp = VISION.warp(cv, big, bw, bh, qb, 315, 440); // pour les points caractéristiques
       const qs = FP.nearCrops().flatMap(c => [FP.fingerprint(FP.resample(img, 126, 176, c)), FP.fingerprint(FP.resample(flip, 126, 176, c))]);
-      const cards = scanCards(), res = cards.length ? FP.rank(qs, cards).slice(0, 5) : [];
+      A.type = VISION.typeScores(img, 126, 176);
+      const cards = scanCards(), res = cards.length ? withType(FP.rank(qs, cards)).slice(0, 5) : [];
       let num = null;
       DIAG.ocrText = '';
       // lecture du numéro seulement si le moteur est prêt : on ne l'attend jamais (il se charge en fond)
@@ -246,6 +261,22 @@ async function pass() {
   return { list: res, sure: FP.isSure(res), plausible: res[0].d < FP.LOOSE_MAX };
 }
 
+const votesFor = id => (A.votes || []).filter(x => x === id).length;
+// Doute : les points caractéristiques départagent les meilleures avant de demander à l'utilisateur
+async function doubtful() {
+  A.paused = true;
+  status('Comparaison des détails…');
+  const o = await orbRerank(A.res, A.lastWarp).catch(() => null);
+  if (o?.length && o[0].n >= 25 && o[0].n >= 2 * (o[1]?.n || 0)) {
+    A.res = [o[0].r, ...A.res.filter(r => r !== o[0].r)];
+    A.conf = confidence(A.res, { orb: true });
+    A.conf.pct = Math.max(A.conf.pct, 85);
+    return propose(true);
+  }
+  A.conf = confidence(A.res);
+  propose(false);
+}
+
 async function loop() {
   if (S.view !== 'scan') return;
   if (!A.paused && !A.analyzing && !(A.flyUntil > Date.now()) && $('#sheet').hidden && A.mode !== 'page') {
@@ -254,21 +285,25 @@ async function loop() {
     try { r = await pass(); DIAG.err = ''; } catch (err) { console.error(err); DIAG.err = err.message; }
     DIAG.ms = Math.round(performance.now() - t0);
     renderDiag();
+    if (r?.blurry) status(A.tip);
     if (r && r.list.length && !A.paused && S.view === 'scan') {
       A.res = r.list;
       const top = r.list[0].card.id;
+      A.votes = [...(A.votes || []).slice(-3), top];
       $('#guide').classList.toggle('searching', r.plausible);
       if (A.hold) { // attend que la carte précédente sorte du cadre
         if (top !== A.hold || !r.plausible) A.hold = null; else status('Retire la carte pour scanner la suivante');
-      } else if (r.sure && top === A.lastTop) { // sûr sur 2 passes de suite
+      } else if (r.sure && votesFor(top) >= (r.byNumber || r.byName ? 2 : 3)) { // vote : 3 images sur les 4 dernières (2 si numéro ou nom lus)
+        A.conf = confidence(r.list, r);
         if ((A.auto && A.mode === 'one') || A.mode === 'batch') choose(r.list[0].card); else propose(true);
       }
       else if (r.plausible) {
         if (!A.analyzing) status(r.sure ? 'Presque…' : 'Recherche…');
         A.doubtSince ||= Date.now();
         // pas sûr après 1,2 s : on lit la carte (nom, numéro, année) pour trouver la bonne et son extension
+        if (A.tip && !A.analyzing) status(A.tip);
         if (!A.analyzed && !A.analyzing && Date.now() - A.doubtSince > 1200) analyzeCard();
-        else if (A.analyzed && !A.analyzing && !A.paused && Date.now() - A.doubtSince > 3000) propose(false);
+        else if (A.analyzed && !A.analyzing && !A.paused && Date.now() - A.doubtSince > 3000) doubtful();
       } else { A.doubtSince = 0; if (!A.analyzing) status(); }
       A.lastTop = top;
     }
@@ -277,9 +312,59 @@ async function loop() {
 }
 
 function resume(holdId) {
-  A.grade = null; A.cardYear = null; A.analyzed = false;
+  A.grade = null; A.cardYear = null; A.analyzed = false; A.votes = []; A.conf = null;
   A.hold = holdId; A.paused = false; A.doubtSince = 0; A.lastTop = null;
   clearProp(); status();
+}
+
+// ---------- couleur / type : une carte d'un autre type que la couleur vue perd des points ----------
+const SHARP_MIN = 7; // shortcut: seuil de netteté calé sur une vraie carte (≈28) et des images floues, à affiner
+function typeMatch(card) {
+  const t = A.type, types = S.meta[card.id]?.t;
+  if (!t?.sure || !types?.length) return null;
+  return Math.max(...types.map(x => t.scores[VISION.typeKey(x)] ?? 0));
+}
+function withType(list) {
+  for (const r of list) { const m = typeMatch(r.card); r.type = m; if (m != null) r.d += 0.05 * (1 - m); }
+  return list.sort((a, b) => a.d - b.d);
+}
+
+// ---------- points caractéristiques : départager les meilleures candidates ----------
+const ORB_CACHE = new Map();
+async function orbRerank(list, query) {
+  const cv = cvReady();
+  if (!cv || !query || list.length < 1) return null;
+  const fq = VISION.orbFeatures(cv, query, 315, 440), out = [];
+  try {
+    for (const r of list.slice(0, 5)) {
+      let f = ORB_CACHE.get(r.card.id);
+      if (!f) {
+        try {
+          const src = r.card.image ? `${r.card.image}/high.webp` : imgOf(r.card, 'high');
+          const im = await withTimeout(getImage(src), 5000), px = grab(im, 0, 0, im.width, im.height, 315, 440);
+          f = VISION.orbFeatures(cv, px, 315, 440); ORB_CACHE.set(r.card.id, f);
+          if (ORB_CACHE.size > 60) { const [k, old] = ORB_CACHE.entries().next().value; VISION.freeFeatures(old); ORB_CACHE.delete(k); }
+        } catch { continue; } // pas d'image (hors ligne) : cette carte n'est pas départagée
+      }
+      out.push({ r, n: VISION.orbInliers(cv, fq, f) });
+    }
+  } finally { VISION.freeFeatures(fq); }
+  out.sort((a, b) => b.n - a.n);
+  DIAG.orb = out.map(o => `${o.r.card.name} ${o.n}`).join(' · ');
+  return out;
+}
+
+// Confiance 0..1 et ce qui a compté
+function confidence(list, extra = {}) {
+  const d1 = list[0]?.d ?? 1, d2 = list[1]?.d ?? d1 + 0.2, parts = [];
+  let c = Math.max(0, Math.min(0.55, (d2 - d1) * 3.5)) + (d1 < 0.3 ? 0.15 : d1 < FP.LOOSE_MAX ? 0.05 : 0);
+  if (d2 - d1 > 0.05) parts.push('image');
+  if (extra.byNumber) { c += 0.25; parts.push('numéro'); }
+  if (extra.byName) { c += 0.15; parts.push('nom'); }
+  if (list[0]?.type > 0.6) { c += 0.05; parts.push('couleur'); }
+  if (extra.orb) { c += 0.2; parts.push('détails'); }
+  if (extra.symbol) { c += 0.1; parts.push('symbole'); }
+  return { pct: Math.round(Math.max(0.05, Math.min(0.99, c)) * 100), parts };
 }
 
 // Propositions affichées par-dessus l'image caméra
@@ -478,9 +563,25 @@ async function analyzeCard(manual = false) {
     R.name = LOGIC.bestName(R.raw, [...new Set(pool.map(c => c.name))])?.name || LOGIC.bestName(R.raw, await dexNames(), 0.72)?.name || null;
     if (R.year) A.cardYear = R.year;
     renderDiag();
+    R.hi = hi;
     await identify(R, shrink(hi, HW, HH, 126, 176), manual);
   } catch (err) { console.error(err); DIAG.err = err.message; }
   finally { A.analyzing = false; A.analyzed = true; if (!A.paused) status(); }
+}
+
+const shrinkTo = (px, w, h, tw, th) => shrink(px, w, h, tw, th);
+const SYM = new Map();
+async function symbolOf(st, band, w, h) {
+  const cv = cvReady(); if (!cv) return 0;
+  try {
+    let sym = SYM.get(st.id);
+    if (!sym) {
+      const url = st.symbol ? st.symbol + '.png' : `https://assets.tcgdex.net/univ/${st.serie}/${st.id}/symbol.png`;
+      const im = await withTimeout(getImage(url), 5000), sw = 64, sh = Math.max(8, Math.round(64 * im.height / im.width));
+      sym = { px: grab(im, 0, 0, im.width, im.height, sw, sh), sw, sh }; SYM.set(st.id, sym);
+    }
+    return VISION.symbolScore(cv, band, w, h, sym.px, sym.sw, sym.sh);
+  } catch { return 0; }
 }
 
 // Ce qui a été lu -> la carte : d'abord dans les extensions activées, sinon dans toute la base
@@ -491,7 +592,10 @@ async function identify(R, lo, manual) {
     const res = FP.rank(qs, pool).slice(0, 5);
     let dec = FP.decide(qs, res, pool, R.num, officialOf);
     if (!dec.matched && R.name) dec = decideByName(qs, res, pool, R.raw.includes(R.name) ? R.raw : R.name, R.num) || dec;
-    if (dec.matched) { A.res = dec.list; status(`Lu : ${what}`); return propose(true); }
+    if (dec.matched) { A.res = dec.list; A.conf = confidence(dec.list, dec); status(`Lu : ${what}`); return propose(true); }
+    // rien de lu d'utile : les détails de l'illustration départagent les meilleures
+    const o = await orbRerank(res, shrinkTo(R.hi, 1260, 1760, 315, 440)).catch(() => null);
+    if (o?.length && o[0].n >= 25 && o[0].n >= 2 * (o[1]?.n || 0)) { A.res = [o[0].r, ...res.filter(r => r !== o[0].r)]; A.conf = confidence(A.res, { orb: true }); A.conf.pct = Math.max(A.conf.pct, 85); return propose(true); }
   }
   // pas dans les extensions activées : ce Pokémon + ce numéro dans toute la base
   let sets = [];
@@ -507,6 +611,14 @@ async function identify(R, lo, manual) {
   if (R.num?.tot && sets.some(s => s.cardCount?.official === R.num.tot || s.cardCount?.total === R.num.tot))
     sets = sets.filter(s => s.cardCount?.official === R.num.tot || s.cardCount?.total === R.num.tot);
   const ranked = LOGIC.rankSets(sets.filter(s => !S.fpSets.includes(s.id)), { tot: R.num?.tot, cardYear: R.year, pickYear: A.year });
+  // symbole d'extension imprimé en bas de la carte : départage les candidates
+  if (ranked.length > 1 && ranked.length <= 6 && R.hi) {
+    const band = shrinkTo(R.hi, 1260, 1760, 630, 880).slice(Math.round(880 * 0.86) * 630 * 4), bh = 880 - Math.round(880 * 0.86);
+    for (const r of ranked) r.sym = await symbolOf(r.st, band, 630, bh);
+    for (const r of ranked) if (r.sym > 0.55) r.sc += 2 * r.sym;
+    ranked.sort((a, b) => b.sc - a.sc);
+    DIAG.sym = ranked.map(r => `${r.st.name} ${(r.sym || 0).toFixed(2)}`).join(' · ');
+  }
   DIAG.guess = ranked.slice(0, 3).map(r => `${r.st.name} (${r.sc})`).join(' · ');
   renderDiag();
   const after = async st => { // extension téléchargée -> on ré-identifie avec elle
@@ -561,6 +673,8 @@ function renderDiag() {
     ${L ? `<span>Bords : ${L.edges ? '<span class="up">trouvés</span>' : '<span class="down">non trouvés</span>'} · nom lu : ${DIAG.name ? '<span class="up">' + esc(DIAG.name) + '</span>' : '–'} <span class="muted">(« ${esc(DIAG.nameText || '')} »)</span> · numéro lu : ${L.num ? (L.num.promo ? L.num.promo + ' ' + L.num.num : L.num.num + '/' + L.num.tot + (L.num.code ? ' ' + L.num.code : '')) : '–'} <span class="muted">(« ${esc(DIAG.ocrText || '')} »)</span></span>
     <span>${L.res.slice(0, 3).map((r, i) => `${i + 1}. ${esc(r.card.name)} ${esc(r.card.localId)} <b>${r.d.toFixed(3)}</b>`).join(' · ')}</span>
     ${DIAG.analysis ? `<span>🔍 Analyse (${esc(DIAG.analysis.src || '')}${DIAG.analysis.edges ? ', bords trouvés' : ', rectangle jaune'}) : nom <b>${esc(DIAG.analysis.name || '–')}</b> <span class="muted">(« ${esc((DIAG.analysis.raw || '').trim().slice(0, 30))} »)</span> · numéro <b>${DIAG.analysis.num ? (DIAG.analysis.num.promo ? DIAG.analysis.num.promo + ' ' + DIAG.analysis.num.num : DIAG.analysis.num.num + '/' + DIAG.analysis.num.tot) : '–'}</b> · année <b>${DIAG.analysis.year || '–'}</b> <span class="muted">(bas : « ${esc(DIAG.analysis.bottom || '')} »)</span></span>` : ''}
+    <span>Image : netteté ${A.quality ? A.quality.sharp.toFixed(1) : '–'} (mini ${SHARP_MIN}) · lumière ${A.quality ? Math.round(A.quality.bright) : '–'} · reflets ${A.quality ? (A.quality.glare * 100).toFixed(1) + ' %' : '–'}${A.tip ? ' · <b>' + esc(A.tip) + '</b>' : ''}</span>
+    <span>Couleur : ${A.type ? `teinte ${A.type.hue}°, saturation ${A.type.sat} → ${Object.entries(A.type.scores).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, v]) => k + ' ' + v.toFixed(2)).join(', ')}` : '–'} · votes ${votesFor(A.votes?.at(-1))}/4${DIAG.orb ? ' · détails : ' + esc(DIAG.orb) : ''}${DIAG.sym ? ' · symboles : ' + esc(DIAG.sym) : ''}</span>
     <span>Reflets : ${A.sheen ? '<span class="up">' + (A.sheen === 'reverse' ? 'reverse' : 'holo') + '</span>' : 'rien de net'} (${A.frames.length}/3 images stables)</span>
     <span>Année © lue : ${A.cardYear || '–'} <span class="muted">(« ${esc(DIAG.yearText || '')} »)</span>${A.year ? ' · année choisie : ' + A.year : ''}${DIAG.guess ? ' · extensions probables : ' + esc(DIAG.guess) : ''}</span>
     <span>Décision : ${L.sure ? '<span class="up">sûr</span>' : 'pas sûr'} (sûr si &lt; ${FP.SURE_MAX} et écart &gt; ${FP.SURE_GAP}, ou numéro + image d'accord)</span>` : '<span>Aucune passe pour l\'instant</span>'}
@@ -568,7 +682,7 @@ function renderDiag() {
 }
 // Relancer : remet le scan à zéro (et la caméra si besoin)
 function retryScan() {
-  Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null, cardYear: null, lastKey: null, offering: false, sheen: null, analyzed: false });
+  Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null, cardYear: null, lastKey: null, offering: false, sheen: null, analyzed: false, votes: [], conf: null });
   clearProp();
   if (DIAG.ocr === 'indisponible') { DIAG.ocr = 'pas encore utilisée'; DIAG.ocrErr = ''; ocrP = null; }
   const v = $('#video');
@@ -686,7 +800,8 @@ function propose(sure) {
   box.innerHTML = sv + (sure ? '' : '<p class="muted">Touche la bonne carte pour l\'ajouter :</p>') + list.map((m, i) => `
     <button class="match ${sure ? 'sure' : ''}" data-i="${i}">
       ${imgOf(m.card) ? `<img src="${esc(imgOf(m.card))}" alt="">` : ''}
-      <span class="grow"><b>${esc(m.card.name)}</b><br><span class="muted">${esc(m.card.setName)} · n° ${esc(m.card.localId)}</span>${sure ? '<br><span class="add">Toucher pour ajouter</span>' : ''}</span>
+      <span class="grow"><b>${esc(m.card.name)}</b><br><span class="muted">${esc(m.card.setName)} · n° ${esc(m.card.localId)}</span>${sure ? '<br><span class="add">Toucher pour ajouter</span>' : ''}
+        ${sure && A.conf ? `<span class="conf"><i style="width:${A.conf.pct}%"></i></span><span class="small muted">Confiance ${A.conf.pct} %${A.conf.parts.length ? ' · ' + A.conf.parts.join(', ') : ''}</span>` : ''}</span>
     </button>`).join('') + `
     ${g ? `<div class="row gradebox"><span>🏷️ Étiquette lue :</span>
       <select id="g-co">${['PSA', 'PCA', 'CGC', 'BGS', 'CCC', 'SGC', 'ACE', 'TAG', '?'].map(x => `<option ${x === (g.co || '?') ? 'selected' : ''}>${x}</option>`).join('')}</select>
@@ -790,6 +905,18 @@ function bindScanUI() {
   });
   $('#quick-form').onsubmit = e => { e.preventDefault(); quickAdd($('#quick-q').value); };
   $('#retry-scan').onclick = retryScan;
+  $('#zoom').oninput = e => A.track?.applyConstraints({ advanced: [{ zoom: +e.target.value }] }).catch(() => { });
+  // mise au point au toucher : sur la zone touchée, puis retour à l'autofocus continu
+  $('#cam').addEventListener('click', async e => {
+    if (e.target.closest('button,input,select,#camprop,#batchc') || !A.track) return;
+    const r = $('#cam').getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    const ring = document.createElement('span'); ring.className = 'focusring'; ring.style.left = e.clientX - r.left + 'px'; ring.style.top = e.clientY - r.top + 'px';
+    $('#cam').appendChild(ring); setTimeout(() => ring.remove(), 900);
+    try {
+      await A.track.applyConstraints({ advanced: [{ pointsOfInterest: [{ x, y }], focusMode: A.caps?.focusMode?.includes('single-shot') ? 'single-shot' : 'continuous', exposureMode: 'continuous' }] });
+      clearTimeout(A.focusT); A.focusT = setTimeout(() => A.track?.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => { }), 4000);
+    } catch { status('Mise au point au toucher non disponible sur ce téléphone'); }
+  });
   $('#analyze').onclick = () => { A.paused = false; clearProp(); analyzeCard(true); };
   $('#scan-set').onchange = e => chooseScanSet(e.target.value);
   $('#scan-year').onchange = e => { A.year = e.target.value; fillScanSets(); retryScan(); status(A.year ? `Recherche limitée à ${A.year}` : ''); };

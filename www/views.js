@@ -652,6 +652,7 @@ async function init() {
   afterChange();
   setTimeout(() => { S.achReady = true; }, 1500); // pas de toast pour les succès déjà acquis au démarrage
   backfill().catch(() => { });
+  setTimeout(() => upgradeFps().catch(() => { }), 3000);
   if (NATIVE) checkUpdate(false);
 }
 init();

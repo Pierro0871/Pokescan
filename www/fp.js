@@ -30,7 +30,19 @@
     for (let i = 0; i < 16; i++) for (let k = 0; k < 3; k++) col[i * 3 + k] /= ccnt[i] || 1;
     const mean = col.reduce((a, v) => a + v, 0) / col.length;
     const c = Array.from(col, v => Math.round(v - mean));
-    return { h: h.map(v => v >>> 0), c };
+    // couleur fine : grille 8×8 de la zone, en chrominance (rouge-vert, jaune-bleu) centrée -> insensible à l'exposition
+    const K = 8, kr = new Float32Array(K * K), kb = new Float32Array(K * K), kn = new Float32Array(K * K);
+    for (let y = cy0; y < cy1; y++) for (let x = cx0; x < cx1; x++) {
+      const i = (y * W + x) * 4, r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+      const ki = Math.floor((y - cy0) / (cy1 - cy0) * K) * K + Math.floor((x - cx0) / (cx1 - cx0) * K);
+      kr[ki] += r - g; kb[ki] += (r + g) / 2 - b; kn[ki]++;
+    }
+    let mr = 0, mb = 0;
+    for (let i = 0; i < K * K; i++) { kr[i] /= kn[i] || 1; kb[i] /= kn[i] || 1; mr += kr[i]; mb += kb[i]; }
+    mr /= K * K; mb /= K * K;
+    const k = [];
+    for (let i = 0; i < K * K; i++) k.push(Math.round(kr[i] - mr), Math.round(kb[i] - mb));
+    return { h: h.map(v => v >>> 0), c, k };
   }
 
   function popcount(n) { n = n - ((n >>> 1) & 0x55555555); n = (n & 0x33333333) + ((n >>> 2) & 0x33333333); return (((n + (n >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24; }
@@ -40,7 +52,10 @@
     for (let i = 0; i < 8; i++) ham += popcount((a.h[i] ^ b.h[i]) >>> 0);
     let cd = 0;
     for (let i = 0; i < a.c.length; i++) cd += Math.abs(a.c[i] - b.c[i]);
-    return ham / 256 + 0.5 * (cd / a.c.length / 255);
+    if (!a.k || !b.k) return ham / 256 + 0.5 * (cd / a.c.length / 255); // ancienne empreinte (sans couleur fine)
+    let kd = 0;
+    for (let i = 0; i < a.k.length; i++) kd += Math.min(80, Math.abs(a.k[i] - b.k[i]));
+    return ham / 256 + 0.3 * (cd / a.c.length / 255) + 0.25 * (kd / a.k.length / 80);
   }
 
   // query : une empreinte ou une liste (plusieurs cadrages testés) ; on garde le meilleur cadrage par carte
