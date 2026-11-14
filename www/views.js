@@ -56,7 +56,7 @@ function renderColl() {
         const n = cnt[st.id] || 0, tot = LOGIC.total(st), p = Math.round(LOGIC.progress(st, cnt) * 100);
         return `<button class="setrow" data-set="${esc(st.id)}">
           ${setLogo(st)}
-          <span class="grow"><b>${esc(st.name)}</b>${S.fpSets.includes(st.id) ? ' <span class="ok">scan ✓</span>' : ''}${p === 100 ? ' <span class="ok">★</span>' : ''}
+          <span class="grow"><b>${esc(st.name)}</b>${st.srcLang ? ` <span class="muted small">${FLAG[st.srcLang]} données EN</span>` : ''}${S.fpSets.includes(st.id) ? ' <span class="ok">scan ✓</span>' : ''}${p === 100 ? ' <span class="ok">★</span>' : ''}
           <span class="muted small">${esc([st.releaseDate && st.releaseDate !== '0000' ? st.releaseDate.slice(0, 4) : '', f.sort !== 'serie' ? st.serieName : ''].filter(Boolean).join(' · '))}</span>
           <span class="bar"><i style="width:${p}%"></i></span></span>
           <span class="count">${n}/${tot}</span></button>`;
@@ -303,7 +303,11 @@ async function search(q, by = 'name') {
   if (by === 'name') S.lastQ = q;
   el.innerHTML = '<p class="muted">Recherche…</p>';
   let cards;
-  try { cards = await getJSON(`/cards?${by}=` + encodeURIComponent(q)); }
+  try {
+    cards = await getJSON(`/cards?${by}=` + encodeURIComponent(q));
+    // rien : orthographe de la base (accents…) -> nom du Pokédex le plus proche, ex. « grahyena » -> « Grahyèna »
+    if (!cards.length && by === 'name') { const bn = LOGIC.bestName(q, await dexNames(), 0.75); if (bn && norm(bn.name) !== norm(q) || bn && bn.name !== q) cards = await getJSON('/cards?name=' + encodeURIComponent(bn.name)); }
+  }
   catch { // hors ligne : extensions téléchargées + collection
     const n = norm(q), seen = new Set();
     cards = [...S.fpCards, ...S.coll.map(e => ({ id: e.cardId, localId: e.localId, name: e.name, image: e.image, photo: e.photo, setId: e.setId }))]

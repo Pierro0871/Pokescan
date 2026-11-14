@@ -225,6 +225,20 @@ async function loadCatalog(withDates = true) {
   const order = series.map(s => s.id);
   S.catalog = full.sort((a, b) => order.indexOf(b.id) - order.indexOf(a.id))
     .map(s => ({ id: s.id, name: s.name, sets: [...(s.sets || [])].reverse().map(st => ({ ...st, releaseDate: old[st.id]?.releaseDate })) }));
+  // Extensions absentes de la base dans cette langue (ex. anciennes séries EX en français) : on les prend en anglais
+  if (S.lang !== 'en') {
+    try {
+      const enSeries = await getJSON('/series', 'en'), have = new Set(allSets().map(s => s.id));
+      await pool(enSeries, 4, async es => {
+        let d; try { d = await getJSON('/series/' + encodeURIComponent(es.id), 'en'); } catch { return; }
+        const extra = (d.sets || []).filter(st => !have.has(st.id)).reverse().map(st => ({ ...st, srcLang: 'en', releaseDate: old[st.id]?.releaseDate }));
+        if (!extra.length) return;
+        let serie = S.catalog.find(x => x.id === es.id);
+        if (!serie) { serie = { id: es.id, name: es.name, sets: [] }; S.catalog.push(serie); }
+        serie.sets.push(...extra);
+      });
+    } catch { }
+  }
   await kv.set(LK('catalog'), S.catalog);
   if (withDates) loadDates();
   S.redrawColl?.();
@@ -235,15 +249,16 @@ async function loadDates() {
   if (!todo.length) return;
   const dates = {};
   await pool(todo, 6, async st => {
-    try { const d = await getJSON('/sets/' + encodeURIComponent(st.id)); dates[st.id] = d.releaseDate || '0000'; kv.set(LK('set:' + st.id), d); } catch { }
+    try { const d = await getJSON('/sets/' + encodeURIComponent(st.id), srcLang(st.id)); dates[st.id] = d.releaseDate || '0000'; kv.set(LK('set:' + st.id), d); } catch { }
   });
   for (const s of S.catalog) for (const st of s.sets) if (dates[st.id]) st.releaseDate = dates[st.id];
   await kv.set(LK('catalog'), S.catalog);
   S.redrawColl?.();
 }
 
+const srcLang = setId => setInfo(setId)?.srcLang || S.lang;
 async function getSet(id) {
-  const k = LK('set:' + id), fresh = getJSON('/sets/' + encodeURIComponent(id)).then(s => (kv.set(k, s), s));
+  const k = LK('set:' + id), fresh = getJSON('/sets/' + encodeURIComponent(id), srcLang(id)).then(s => (kv.set(k, s), s));
   const cached = await kv.get(k);
   if (cached) { fresh.catch(() => { }); return cached; } // cache d'abord, rafraîchi en fond
   return fresh;
@@ -259,7 +274,7 @@ async function downloadSet(set, onProg) {
   await pool(cards, 6, async c => {
     const card = { id: c.id, localId: c.localId, name: c.name, image: c.image, setId: set.id, setName: set.name, official: set.cardCount?.official, abbr: set.abbreviation?.official };
     try {
-      const d = await getJSON('/cards/' + encodeURIComponent(c.id));
+      const d = await getJSON('/cards/' + encodeURIComponent(c.id), srcLang(set.id));
       card.variants = d.variants; card.rarity = d.rarity;
       rememberMeta(d);
       if (d.pricing?.cardmarket) S.prices[c.id] = d.pricing.cardmarket;
@@ -356,7 +371,7 @@ async function openCard(c, onClose) {
   renderCard(c);
   if (c.id.startsWith('perso-')) return;
   try { // rafraîchit prix, variantes et infos si en ligne
-    const d = await getJSON('/cards/' + encodeURIComponent(c.id));
+    const d = await getJSON('/cards/' + encodeURIComponent(c.id), srcLang(c.setId));
     c.variants = d.variants; c.rarity = d.rarity; c.illustrator = d.illustrator; c.name = d.name || c.name; c.image ||= d.image;
     rememberMeta(d);
     if (d.pricing?.cardmarket) { S.prices[c.id] = d.pricing.cardmarket; kv.set('prices', S.prices); }
