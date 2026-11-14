@@ -117,3 +117,15 @@ Promise.resolve(require('@techstark/opencv-js')).then(cv => {
   a.strictEqual(V3.parseYear('illisible'), null);
   console.log('OK année');
 }
+
+{
+  const V4 = require('../www/vision.js'), a = require('assert'), w = 126, h = 176;
+  const frame = (spot) => { const f = new Uint8ClampedArray(w * h * 4).fill(120); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (spot(x, y)) { const i = (y * w + x) * 4; f[i] = f[i + 1] = f[i + 2] = 250; } return f; };
+  const inArt = (x, y) => x > w * 0.08 && x < w * 0.92 && y > h * 0.10 && y < h * 0.49;
+  // reflet qui se déplace hors illustration (bas de carte) -> reverse
+  a.strictEqual(V4.sheen([0, 1, 2].map(k => frame((x, y) => !inArt(x, y) && y > h * 0.55 && Math.abs(x - 30 - k * 30) < 15)), w, h), 'reverse');
+  // reflet qui se déplace dans l'illustration -> holo
+  a.strictEqual(V4.sheen([0, 1, 2].map(k => frame((x, y) => inArt(x, y) && Math.abs(x - 30 - k * 30) < 15)), w, h), 'holo');
+  a.strictEqual(V4.sheen([0, 1, 2].map(() => frame(() => false)), w, h), null);
+  console.log('OK reflets');
+}

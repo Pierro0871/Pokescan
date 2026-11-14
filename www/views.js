@@ -28,7 +28,7 @@ function renderColl() {
   }
   const sets = allSets(), years = [...new Set(sets.map(LOGIC.year))].filter(y => y !== '—').sort().reverse();
   const persoN = S.coll.filter(e => e.setId === 'perso').reduce((a, e) => a + e.qty, 0);
-  el.innerHTML = `<h1>Collection</h1>
+  el.innerHTML = `<div class="row"><h1 class="grow">Collection</h1>${langSelect()}</div>
     <input id="cf-q" type="search" placeholder="Chercher une extension (ex. Nuit, McDo, promo…)" value="${esc(f.q)}" autocomplete="off">
     <div class="row filters">
       <select id="cf-sort">${[['serie', 'Par série'], ['new', 'Plus récentes'], ['old', 'Plus anciennes'], ['name', 'Nom A→Z'], ['prog', 'Plus avancées'], ['progLow', 'Moins avancées']].map(([k, l]) => `<option value="${k}" ${f.sort === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -37,6 +37,7 @@ function renderColl() {
     </div>
     <div class="row">${[['', 'Toutes'], ['started', 'Commencées'], ['done', 'Complètes'], ['none', 'Pas commencées'], ['scan', 'Scan activé']].map(([k, l]) => `<button class="chip ${f.state === k ? 'on' : ''}" data-st="${k}">${l}</button>`).join('')}</div>
     ${allTags().length ? `<div class="row tagrow"><span class="muted small">🏷️</span>${allTags().map(t => `<button class="chip tag" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
+    <button class="setrow" id="wanted"><span class="sym">🔎</span><span class="grow"><b>Cartes à trouver</b><br><span class="muted small">Ce qui te manque dans tes extensions commencées, par prix</span></span></button>
     <button class="setrow" id="perso"><span class="sym">✍️</span><span class="grow"><b>Mes cartes perso</b><br><span class="muted small">Cartes absentes de la base, ajoutées à la main</span></span><span class="count">${persoN}</span></button>
     <div id="cf-list"></div>
     <div class="col"><button id="dl-all" class="ghost">Tout télécharger pour le hors ligne…</button>
@@ -44,7 +45,7 @@ function renderColl() {
     <p id="dl-all-prog" class="muted small"></p>`;
   const list = () => {
     const owned = {};
-    for (const e of S.coll) (owned[e.setId] ||= new Set()).add(e.cardId);
+    for (const e of S.coll) if (langOf(e) === S.lang) (owned[e.setId] ||= new Set()).add(e.cardId);
     const cnt = Object.fromEntries(Object.entries(owned).map(([k, v]) => [k, v.size]));
     const groups = LOGIC.groupSets(LOGIC.filterSets(sets, f, cnt, S.fpSets), f.sort, cnt);
     const noDate = (f.sort === 'new' || f.sort === 'old' || f.year) && sets.some(s => !s.releaseDate);
@@ -68,6 +69,8 @@ function renderColl() {
   $('#cf-year').onchange = e => { f.year = e.target.value; list(); };
   $$('[data-st]').forEach(b => b.onclick = () => { f.state = b.dataset.st; $$('[data-st]').forEach(x => x.classList.toggle('on', x === b)); list(); });
   $('#perso').onclick = openPerso;
+  $('#wanted').onclick = () => openWanted();
+  el.querySelector('.langsel').onchange = e => switchLang(e.target.value);
   $$('[data-tag]').forEach(b => b.onclick = () => openTag(b.dataset.tag));
   $('#refresh-cat').onclick = () => loadCatalog().then(() => toast('Liste à jour')).catch(err => toast('Erreur : ' + esc(err.message)));
   $('#dl-all').onclick = downloadAll;
@@ -146,6 +149,64 @@ async function openSet(id, filter = 'all', mode = S.setMode || 'grid', page = 0)
 }
 function backToList() { $('#view-coll').dataset.set = ''; renderColl(); }
 
+// ---------- cartes à trouver ----------
+async function openWanted(sort = S.wantSort || 'price', max = S.wantMax ?? '') {
+  const el = $('#view-coll');
+  S.redrawColl = () => openWanted(sort, max);
+  el.innerHTML = '<button class="ghost" id="back">← Extensions</button><h1>Cartes à trouver</h1><p class="muted">Chargement…</p>';
+  $('#back').onclick = backToList;
+  const owned = ownedIds(), bySet = {};
+  for (const e of S.coll) if (langOf(e) === S.lang) (bySet[e.setId] ||= new Set()).add(e.cardId);
+  const started = allSets().filter(st => bySet[st.id]?.size && bySet[st.id].size < (st.cardCount?.total || LOGIC.total(st)));
+  let miss = [];
+  await pool(started, 4, async st => {
+    try { const set = await getSet(st.id); for (const c of set.cards || []) if (!owned.has(c.id)) miss.push({ ...c, setId: st.id, setName: st.name, date: st.releaseDate || '', p: S.prices[c.id]?.trend ?? null }); } catch { }
+  });
+  if (S.view !== 'coll') return;
+  const lim = parseFloat(max);
+  if (isFinite(lim)) miss = miss.filter(c => c.p != null && c.p <= lim);
+  miss.sort(sort === 'price' ? (a, b) => (b.p ?? -1) - (a.p ?? -1) : sort === 'cheap' ? (a, b) => (a.p ?? 1e9) - (b.p ?? 1e9) : (a, b) => b.date.localeCompare(a.date) || LOGIC.localNum(a) - LOGIC.localNum(b));
+  const total = miss.reduce((a, c) => a + (c.p || 0), 0);
+  el.innerHTML = `<button class="ghost" id="back">← Extensions</button><h1>Cartes à trouver</h1>
+    <p class="muted">${miss.length} carte(s) dans ${started.length} extension(s) commencée(s)${total ? ' · ' + eur(total) + ' en tout' : ''}</p>
+    <div class="row"><select id="w-sort"><option value="price" ${sort === 'price' ? 'selected' : ''}>Plus chères d'abord</option><option value="cheap" ${sort === 'cheap' ? 'selected' : ''}>Moins chères d'abord</option><option value="set" ${sort === 'set' ? 'selected' : ''}>Par extension</option></select>
+      <input id="w-max" type="number" min="0" step="0.5" placeholder="Prix max €" value="${esc(max)}" class="num"><button class="ghost" id="w-share">📤 Liste</button></div>
+    ${miss.length ? grid(miss.slice(0, 300), owned, c => (c.p != null ? eur(c.p) : '–') + ' · ' + c.localId) : '<p class="muted">Rien à trouver avec ces critères.</p>'}
+    ${miss.length > 300 ? '<p class="muted small">300 premières affichées (la liste partagée contient tout).</p>' : ''}
+    <p class="muted small">Prix connus seulement pour les extensions dont le scan est activé.</p>`;
+  $('#back').onclick = backToList;
+  $('#w-sort').onchange = e => { S.wantSort = e.target.value; openWanted(e.target.value, max); };
+  $('#w-max').onchange = e => { S.wantMax = e.target.value; openWanted(sort, e.target.value); };
+  $('#w-share').onclick = () => {
+    const by = {};
+    for (const c of miss) (by[c.setName] ||= []).push(`${c.localId} ${c.name}${c.p != null ? ' (' + eur(c.p) + ')' : ''}`);
+    saveFile(`cartes-a-trouver-${today()}.txt`, `Cartes à trouver (${miss.length})\n\n` + Object.entries(by).map(([k, v]) => `${k}\n- ${v.join('\n- ')}`).join('\n\n'), 'text/plain');
+  };
+  $$('#view-coll .cell').forEach(b => b.onclick = () => openCard({ ...miss.find(c => c.id === b.dataset.id) }, () => openWanted(sort, max)));
+}
+
+// ---------- alerte : nouvelle extension sortie ----------
+async function checkNewSets() {
+  const last = await kv.get(LK('setscheck'));
+  if (last && Date.now() - last < 12 * 3600e3) return; // au plus deux fois par jour
+  const before = new Set(allSets().map(s => s.id));
+  const known = (await kv.get(LK('knownsets'))) || [...before];
+  try { await loadCatalog(); } catch { return; }
+  kv.set(LK('setscheck'), Date.now());
+  const fresh = allSets().filter(s => !known.includes(s.id));
+  kv.set(LK('knownsets'), allSets().map(s => s.id));
+  if (!fresh.length || !before.size) return;
+  const st = fresh[0], b = $('#newset');
+  b.innerHTML = `<span>🆕 Nouvelle extension : <b>${esc(st.name)}</b>${fresh.length > 1 ? ` (+${fresh.length - 1})` : ''}</span><button id="ns-go">Activer le scan</button><button id="ns-x" class="x">✕</button>`;
+  b.hidden = false;
+  $('#ns-x').onclick = () => b.hidden = true;
+  $('#ns-go').onclick = async () => {
+    b.innerHTML = `<span>Téléchargement de ${esc(st.name)}…</span>`;
+    try { await downloadSet(await getSet(st.id)); toast(`${esc(st.name)} est prête pour le scan`); } catch (err) { toast('Erreur : ' + esc(err.message)); }
+    b.hidden = true; S.redrawColl?.();
+  };
+}
+
 // ---------- étiquette : toutes les cartes qui la portent ----------
 function openTag(tag) {
   const el = $('#view-coll'), owned = ownedIds();
@@ -200,7 +261,9 @@ function openPerso() {
 
 // ---------- Pokémon : recherche, Pokédex, illustrateurs ----------
 let DEX = null;
-async function dexNames() { return DEX ||= fetch('vendor/pokedex-fr.json').then(r => r.json()).catch(() => []); }
+const DEXL = {};
+// noms des Pokémon dans la langue des cartes (italien et portugais utilisent les noms anglais)
+async function dexNames(lang = S.lang) { const f = { it: 'en', pt: 'en' }[lang] || lang; return DEXL[f] ||= fetch(`vendor/pokedex-${f}.json`).then(r => r.json()).catch(() => fetch('vendor/pokedex-fr.json').then(r => r.json())); }
 function renderPoke(tab = S.pokeTab || 'search') {
   S.pokeTab = tab;
   const el = $('#view-poke');
@@ -241,7 +304,7 @@ async function renderDex() {
     <div class="row">${gens.map(([x, y], i) => { const n = [...have].filter(d => d >= x && d <= y).length; return `<button class="chip ${g === i ? 'on' : ''}" data-g="${i}">${i + 1}G ${n}/${y - x + 1}</button>`; }).join('')}</div>
     <div class="dex">${Array.from({ length: b - a + 1 }, (_, k) => a + k).map(d => `<button class="dexcell ${have.has(d) ? 'got' : ''}" data-n="${esc(names[d - 1] || '')}"><small>#${d}</small><span>${esc(names[d - 1] || '?')}</span></button>`).join('')}</div>`;
   $$('[data-g]').forEach(x => x.onclick = () => { S.dexGen = +x.dataset.g; renderDex(); });
-  $$('.dexcell').forEach(x => x.onclick = () => { if (!x.dataset.n) return; S.lastQ = x.dataset.n; renderPoke('search'); });
+  $$('.dexcell').forEach(x => x.onclick = () => { if (x.dataset.n) openPokemon(x.dataset.n, +x.querySelector('small').textContent.slice(1)); });
 }
 function renderIllus() {
   const by = {};
@@ -254,6 +317,29 @@ function renderIllus() {
   const go = n => { $('#poke-body').querySelectorAll('.line,h2').forEach(x => x.remove()); search(n, 'illustrator'); };
   $('#il-form').onsubmit = e => { e.preventDefault(); const n = $('#il-q').value.trim(); if (n) go(n); };
   $$('[data-il]').forEach(b => b.onclick = () => go(b.dataset.il));
+}
+
+// ---------- fiche Pokémon : toutes ses cartes ----------
+async function openPokemon(name, dexNo) {
+  if (S.view !== 'poke') show('poke');
+  const body = $('#poke-body');
+  body.innerHTML = `<button class="ghost" id="pk-back">← Pokédex</button><h1>${esc(name)}</h1><p class="muted">Chargement…</p>`;
+  $('#pk-back').onclick = () => renderPoke('dex');
+  let cards = [];
+  try { cards = await getJSON('/cards?name=' + encodeURIComponent(name)); }
+  catch { const n = norm(name); cards = S.fpCards.filter(c => norm(c.name).includes(n)); }
+  if (dexNo) cards = cards.filter(c => !S.meta[c.id]?.d?.length || S.meta[c.id].d.includes(dexNo)); // homonymes exclus si on sait
+  const date = c => setInfo(setIdOf(c))?.releaseDate || '';
+  cards.sort((a, b) => date(b).localeCompare(date(a)));
+  const ownedAll = new Set(S.coll.map(e => e.cardId)), mine = cards.filter(c => ownedAll.has(c.id));
+  const val = S.coll.filter(e => mine.some(c => c.id === e.cardId)).reduce((a, e) => a + (FP.unitPrice(S.prices[e.cardId], e.variant, e.cond, S.coef).trend || 0) * e.qty, 0);
+  const qty = S.coll.filter(e => mine.some(c => c.id === e.cardId)).reduce((a, e) => a + e.qty, 0);
+  body.innerHTML = `<button class="ghost" id="pk-back">← Pokédex</button>
+    <h1>${dexNo ? `<span class="muted">#${dexNo}</span> ` : ''}${esc(name)}</h1>
+    <div class="kpis three"><div><b>${mine.length}/${cards.length}</b><span>cartes différentes</span></div><div><b>${qty}</b><span>exemplaires</span></div><div><b>${eur(val)}</b><span>valeur</span></div></div>
+    ${cards.length ? grid(cards, ownedAll, c => setName(setIdOf(c))) : '<p class="muted">Aucune carte trouvée (hors ligne ?).</p>'}`;
+  $('#pk-back').onclick = () => renderPoke('dex');
+  $$('#poke-body .cell').forEach(b => b.onclick = () => openCard({ ...cards.find(c => c.id === b.dataset.id) }, () => openPokemon(name, dexNo)));
 }
 
 // ---------- Boosters : vrais (journal) et fictifs ----------
@@ -319,20 +405,22 @@ function renderReal() {
 
 // ---------- Stats ----------
 function renderStats() {
-  const st = FP.stats(S.coll, S.prices, S.coef), el = $('#view-stats');
-  const byId = Object.fromEntries(S.coll.map(e => [e.cardId, e]));
-  const withPaid = S.coll.filter(e => e.paid != null);
+  const langs = [...new Set(S.coll.map(langOf))], L = S.statLang && langs.includes(S.statLang) ? S.statLang : '';
+  const coll = L ? S.coll.filter(e => langOf(e) === L) : S.coll;
+  const st = FP.stats(coll, S.prices, S.coef), el = $('#view-stats');
+  const byId = Object.fromEntries(coll.map(e => [e.cardId, e]));
+  const withPaid = coll.filter(e => e.paid != null);
   const invested = withPaid.reduce((a, e) => a + e.paid * e.qty, 0);
   const worth = withPaid.reduce((a, e) => a + (FP.unitPrice(S.prices[e.cardId], e.variant, e.cond, S.coef).trend || 0) * e.qty, 0);
-  const moves = [...new Set(S.coll.map(e => e.cardId))].map(id => ({ id, ch: LOGIC.priceChange(S.prices[id]), p: S.prices[id]?.trend || 0 }))
+  const moves = [...new Set(coll.map(e => e.cardId))].map(id => ({ id, ch: LOGIC.priceChange(S.prices[id]), p: S.prices[id]?.trend || 0 }))
     .filter(x => x.ch != null && x.p >= 0.5).sort((a, b) => b.ch - a.ch);
   const rar = {}, typ = {};
-  for (const e of S.coll) { const m = S.meta[e.cardId]; if (!m) continue; rar[m.r || 'Inconnue'] = (rar[m.r || 'Inconnue'] || 0) + e.qty; for (const t of m.t || []) typ[t] = (typ[t] || 0) + e.qty; }
+  for (const e of coll) { const m = S.meta[e.cardId]; if (!m) continue; rar[m.r || 'Inconnue'] = (rar[m.r || 'Inconnue'] || 0) + e.qty; for (const t of m.t || []) typ[t] = (typ[t] || 0) + e.qty; }
   const bars = o => { const a = Object.entries(o).sort((x, y) => y[1] - x[1]), max = a[0]?.[1] || 1; return a.map(([k, n]) => `<div class="hbar"><span>${esc(k)}</span><i style="width:${n / max * 100}%"></i><b>${n}</b></div>`).join(''); };
   const ach = LOGIC.achievements(achState(st));
   const line = (e, right) => `<button class="line" data-id="${esc(e.cardId)}"><span class="grow">${esc(e.name)} <span class="muted">${esc(e.setName)} ${esc(e.localId)}</span></span>${right}</button>`;
   el.innerHTML = `
-    <h1>Stats</h1>
+    <div class="row"><h1 class="grow">Stats</h1>${langs.length > 1 ? `<select id="st-lang"><option value="">Toutes langues</option>${langs.map(k => `<option value="${k}" ${L === k ? 'selected' : ''}>${FLAG[k]} ${LANGS[k]}</option>`).join('')}</select>` : ''}</div>
     <div class="kpis">
       <div><b>${st.unique}</b><span>cartes différentes</span></div>
       <div><b>${st.qty}</b><span>cartes au total</span></div>
@@ -348,6 +436,9 @@ function renderStats() {
     ${moves.filter(m => m.ch > 0).slice(0, 5).map(m => line(byId[m.id], `<b class="up">${pct(m.ch)}</b>`)).join('') || '<p class="muted">Rien de notable.</p>'}
     <h2>Plus fortes baisses (7 jours)</h2>
     ${moves.filter(m => m.ch < 0).slice(-5).reverse().map(m => line(byId[m.id], `<b class="down">${pct(m.ch)}</b>`)).join('') || '<p class="muted">Rien de notable.</p>'}
+    <h2>Classement des extensions</h2>
+    <div class="row">${[['value', 'Valeur'], ['prog', 'Avancement'], ['cheap', 'Moins chères à finir']].map(([k, l]) => `<button class="chip ${(S.rankBy || 'value') === k ? 'on' : ''}" data-rk="${k}">${l}</button>`).join('')}</div>
+    ${rankingHTML(coll)}
     <h2>Doublons (${st.dups.reduce((a, d) => a + d.extra, 0)} à échanger)</h2>
     ${st.dups.map(d => line(byId[d.id], `<b>+${d.extra}</b>`)).join('') || '<p class="muted">Pas de doublon.</p>'}
     <h2>Par rareté</h2>${bars(rar) || '<p class="muted small">Infos chargées en ligne.</p>'}
@@ -358,6 +449,8 @@ function renderStats() {
     ${histHTML()}
     <h2>Réglages</h2>
     <div class="row"><span class="grow">Thème</span>${[['auto', 'Auto'], ['dark', 'Sombre'], ['light', 'Clair']].map(([k, l]) => `<button class="chip ${S.theme === k ? 'on' : ''}" data-th="${k}">${l}</button>`).join('')}</div>
+    <div class="row"><span class="grow">Son du scan</span><select id="snd">${Object.entries(SOUNDS).map(([k, v]) => `<option value="${k}" ${(S.sound || 'bip') === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select><button class="ghost small" id="snd-try">▶</button></div>
+    <div class="row"><span class="grow">Couleur</span>${Object.entries(ACCENTS).map(([k, c]) => `<button class="swatch ${(S.accent || 'jaune') === k ? 'on' : ''}" data-ac="${k}" style="background:${c}" aria-label="${k}"></button>`).join('')}</div>
     <p class="muted small">Coefficients de prix selon l'état (estimation appliquée au prix Near Mint de Cardmarket) :</p>
     <div class="coefs">${FP.CONDS.map(k => `<label>${FP.COND_LABEL[k]}<input type="number" min="0" max="200" step="5" data-c="${k}" value="${Math.round(S.coef[k] * 100)}">%</label>`).join('')}</div>
     <h2>Export &amp; sauvegarde</h2>
@@ -379,11 +472,33 @@ function renderStats() {
   });
   $$('[data-th]').forEach(b => b.onclick = () => { S.theme = b.dataset.th; kv.set('theme', S.theme); applyTheme(); renderStats(); });
   $('#share-img').onclick = shareImage;
+  $('#st-lang') && ($('#st-lang').onchange = e => { S.statLang = e.target.value; renderStats(); });
+  $$('[data-rk]').forEach(b => b.onclick = () => { S.rankBy = b.dataset.rk; renderStats(); });
+  $('#snd').onchange = e => { S.sound = e.target.value; kv.set('sound', S.sound); playSound('add'); };
+  $('#snd-try').onclick = () => playSound('add');
+  $$('[data-ac]').forEach(b => b.onclick = () => { S.accent = b.dataset.ac; kv.set('accent', S.accent); applyTheme(); renderStats(); });
+  $$('#view-stats .line[data-set]').forEach(b => b.onclick = () => { show('coll'); openSet(b.dataset.set); });
   const day = today();
   $('#csv').onclick = () => saveFile(`pokescan-${day}.csv`, FP.toCSV(S.coll, S.prices, S.coef), 'text/csv');
   $('#bak').onclick = () => saveFile(`pokescan-sauvegarde-${day}.json`, JSON.stringify({ app: 'PokeScan', version: 2, date: new Date().toISOString(), coll: S.coll, coef: S.coef, prices: S.prices, hist: S.hist, valhist: S.valhist, boosters: S.boosters, decks: S.decks }), 'application/json');
   $('#imp').onclick = () => $('#import-file').click();
   $('#hist-more') && ($('#hist-more').onclick = () => { S.histN = (S.histN || 30) + 50; renderStats(); });
+}
+
+// Classement des extensions : valeur possédée, avancement, ou coût pour finir (extensions au scan activé)
+function rankingHTML(coll) {
+  const by = {};
+  for (const e of coll) {
+    const r = by[e.setId] ||= { id: e.setId, name: e.setName, v: 0, ids: new Set() };
+    r.v += (FP.unitPrice(S.prices[e.cardId], e.variant, e.cond, S.coef).trend || 0) * e.qty; r.ids.add(e.cardId);
+  }
+  let rows = Object.values(by).filter(r => r.id !== 'perso');
+  const how = S.rankBy || 'value';
+  if (how === 'value') rows = rows.sort((a, b) => b.v - a.v).map(r => ({ ...r, right: eur(r.v) }));
+  else if (how === 'prog') rows = rows.map(r => { const st = setInfo(r.id), t = st ? LOGIC.total(st) : 0; return { ...r, p: t ? Math.min(1, r.ids.size / t) : 0, right: t ? `${r.ids.size}/${t} · ${Math.round(Math.min(1, r.ids.size / t) * 100)} %` : r.ids.size + '' }; }).sort((a, b) => b.p - a.p);
+  else rows = rows.filter(r => S.fpSets.includes(r.id)).map(r => { const v = LOGIC.setValue(S.fpCards.filter(c => c.setId === r.id), r.ids, S.prices); return { ...r, m: v.missing, right: v.missing ? eur(v.missing) + ' pour finir' : 'complète ✓' }; }).sort((a, b) => a.m - b.m);
+  if (!rows.length) return `<p class="muted small">${how === 'cheap' ? 'Active le scan de tes extensions pour connaître le coût pour les finir.' : 'Rien à classer pour l\'instant.'}</p>`;
+  return rows.slice(0, 10).map((r, i) => `<button class="line" data-set="${esc(r.id)}"><span class="rank">${i + 1}</span><span class="grow">${esc(r.name)}</span><b>${r.right}</b></button>`).join('');
 }
 
 function valueChart() {
@@ -462,7 +577,7 @@ async function importBackup(ev) {
   if (!f) return;
   try {
     const d = JSON.parse(await f.text());
-    const okEntry = e => e && typeof e.cardId === 'string' && typeof e.setId === 'string' && Number.isInteger(e.qty) && e.qty > 0
+    const okEntry = e => e && (e.lang == null || e.lang in LANGS) && typeof e.cardId === 'string' && typeof e.setId === 'string' && Number.isInteger(e.qty) && e.qty > 0
       && e.variant in VARIANTS && FP.CONDS.includes(e.cond) && (e.paid == null || typeof e.paid === 'number') && (e.photo == null || /^data:image\//.test(e.photo));
     if (d.app !== 'PokeScan' || !Array.isArray(d.coll) || !d.coll.every(okEntry)) throw new Error('fichier non reconnu');
     if (!confirm(`Remplacer ta collection actuelle (${S.coll.length} lignes) par la sauvegarde du ${new Date(d.date).toLocaleDateString('fr-FR')} (${d.coll.length} lignes) ?`)) return;
@@ -484,9 +599,12 @@ async function importBackup(ev) {
 }
 
 // ---------- thème ----------
+const ACCENTS = { jaune: '#ffcb05', vert: '#3ecf8e', bleu: '#4cc9f0', rose: '#ff5fa2', violet: '#a78bfa', orange: '#ff9f43' };
 function applyTheme() {
   const light = S.theme === 'light' || (S.theme === 'auto' && matchMedia('(prefers-color-scheme: light)').matches);
   document.documentElement.dataset.theme = light ? 'light' : 'dark';
+  const ac = ACCENTS[S.accent] || ACCENTS.jaune;
+  document.documentElement.style.setProperty('--acc', ac);
 }
 
 // ---------- mises à jour ----------
@@ -519,13 +637,10 @@ async function init() {
   lastSaved = JSON.stringify(S.coll);
   S.prices = await g('prices', {});
   S.coef = { ...FP.DEFAULT_COEF, ...(await g('coef', {})) };
-  S.catalog = await kv.get('catalog');
-  S.fpSets = await g('fpsets', []);
-  S.thumbSets = await g('thumbsets', []);
+  await loadLang(await g('lang', 'fr'));
   S.meta = await g('meta', {}); S.hist = await g('hist', []); S.valhist = await g('valhist', {});
-  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []); S.cardBack = await g('cardback', null);
+  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []); S.cardBack = await g('cardback', null); S.sound = await g('sound', 'bip'); S.accent = await g('accent', 'jaune');
   applyTheme(); matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
-  for (const id of S.fpSets) S.fpCards.push(...((await kv.get('fp:' + id)) || []));
   $$('#tabs button').forEach(b => b.onclick = () => show(b.dataset.view));
   $('#sheet').onclick = e => { if (e.target.id === 'sheet') closeSheet(); };
   $('#import-file').onchange = importBackup;
@@ -533,7 +648,7 @@ async function init() {
   bindScanUI();
   updateUndoUI();
   show('scan');
-  if (!S.catalog) loadCatalog().catch(() => { }); else loadDates().catch(() => { });
+  if (!S.catalog) loadCatalog().catch(() => { }); else { loadDates().catch(() => { }); checkNewSets().catch(() => { }); }
   afterChange();
   setTimeout(() => { S.achReady = true; }, 1500); // pas de toast pour les succès déjà acquis au démarrage
   backfill().catch(() => { });

@@ -8,23 +8,26 @@
 </head>
 <body>
 <div id="update" hidden></div>
+<div id="newset" hidden></div>
 <main>
   <section id="view-scan" class="view">
     <div class="row seg" role="group" aria-label="Mode de scan">
-      <button class="chip on" data-mode="one">1 carte</button><button class="chip" data-mode="page">Page</button><button class="chip" data-mode="graded">Gradée</button>
+      <button class="chip on" data-mode="one">1 carte</button><button class="chip" data-mode="page">Page</button><button class="chip" data-mode="batch">Lot</button><button class="chip" data-mode="graded">Gradée</button>
       <span class="grow"></span>
       <button class="chip on" data-var="normal">Normale</button><button class="chip" data-var="reverse">Reverse</button><button class="chip" data-var="holo">Holo</button>
     </div>
-    <div class="row scanpick"><select id="scan-set" aria-label="Extension à scanner" class="grow"></select><select id="scan-year" aria-label="Année"></select></div>
+    <div class="row scanpick"><select id="scan-lang" class="langsel" aria-label="Langue"><option value="fr">🇫🇷</option><option value="en">🇬🇧</option><option value="de">🇩🇪</option><option value="it">🇮🇹</option><option value="es">🇪🇸</option><option value="pt">🇵🇹</option><option value="ja">🇯🇵</option></select><select id="scan-set" aria-label="Extension à scanner" class="grow"></select><select id="scan-year" aria-label="Année"></select></div>
     <div id="cam">
       <video id="video" playsinline muted></video>
       <canvas id="overlay"></canvas>
       <div id="guide"></div>
       <button id="torch" class="torch" hidden aria-label="Lampe torche">🔦</button>
+      <div id="batchc" hidden></div>
       <p id="cam-msg"></p>
     </div>
     <div class="row small autorow">
       <label><input type="checkbox" id="auto"> Ajout auto</label>
+      <label><input type="checkbox" id="autovar"> Variante auto</label>
       <label><input type="checkbox" id="debug"> Diagnostic</label>
       <span class="grow"></span>
       <button class="ghost small" id="retry-scan">↻ Relancer le scan</button>

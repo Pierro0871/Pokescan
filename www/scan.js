@@ -3,7 +3,7 @@
 
 // ---------- scan automatique ----------
 const A = { timer: 0, res: null, qs: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, track: null, torch: false,
-  variant: 'normal', mode: 'one', session: [], booster: null, auto: false, grade: null };
+  variant: 'normal', mode: 'one', session: [], booster: null, auto: false, grade: null, batch: { n: 0, v: 0 }, autoVar: false, sheen: null };
 let CV = null; // OpenCV, chargé en arrière-plan (13 Mo)
 function cvReady() {
   if (!CV && window.cv && !cvReady.p) cvReady.p = Promise.resolve(window.cv).then(m => { CV = m; });
@@ -39,16 +39,31 @@ function status(t) { $('#cam-msg').textContent = t || `Pose la carte dans le rec
 
 // Retour : vibration + petit son
 let audio;
-function feedback(kind) {
-  navigator.vibrate?.(kind === 'add' ? [30, 50, 30] : 25);
+// Sons au choix, synthétisés (pas de fichier) : [type d'onde, notes en Hz, durée d'une note]
+const SOUNDS = {
+  bip: { label: 'Bip', found: ['sine', [880, 1320], 0.07], add: ['sine', [660, 990], 0.07] },
+  coin: { label: 'Pièce', found: ['square', [988], 0.06], add: ['square', [988, 1319], 0.08] },
+  pop: { label: 'Pop', found: ['triangle', [520], 0.05], add: ['triangle', [420, 840], 0.05] },
+  laser: { label: 'Laser', found: ['sawtooth', [1400, 700], 0.06], add: ['sawtooth', [1800, 900, 450], 0.05] },
+  arpege: { label: 'Arpège', found: ['sine', [660, 880], 0.06], add: ['sine', [523, 659, 784, 1047], 0.06] },
+  none: { label: 'Aucun' },
+};
+function playSound(kind, name = S.sound || 'bip') {
+  const snd = SOUNDS[name]?.[kind === 'add' ? 'add' : 'found'];
+  if (!snd) return;
   try {
     audio ||= new AudioContext();
-    const t = audio.currentTime, o = audio.createOscillator(), g = audio.createGain();
-    o.frequency.setValueAtTime(kind === 'add' ? 660 : 880, t);
-    o.frequency.setValueAtTime(kind === 'add' ? 990 : 1320, t + 0.07);
-    g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
-    o.connect(g).connect(audio.destination); o.start(t); o.stop(t + 0.2);
+    const [type, notes, d] = snd, t = audio.currentTime, o = audio.createOscillator(), g = audio.createGain();
+    o.type = type;
+    notes.forEach((f, i) => o.frequency.setValueAtTime(f, t + i * d));
+    const end = t + notes.length * d + 0.08;
+    g.gain.setValueAtTime(type === 'sine' || type === 'triangle' ? 0.14 : 0.05, t); g.gain.exponentialRampToValueAtTime(0.001, end);
+    o.connect(g).connect(audio.destination); o.start(t); o.stop(end);
   } catch { }
+}
+function feedback(kind) {
+  navigator.vibrate?.(kind === 'add' ? [30, 50, 30] : 25);
+  playSound(kind);
 }
 
 // Géométrie : zone capturée = cadre agrandi de 35 % (la carte peut dépasser ou être penchée)
@@ -191,6 +206,7 @@ async function pass() {
       const moved = !A.corners || qv.some((p, i) => Math.hypot(p.x - A.corners[i].x, p.y - A.corners[i].y) > cr.w * 0.04);
       A.frames = moved ? [lo] : [...A.frames.slice(-2), lo]; A.corners = qv;
       const img = VISION.median(A.frames), flip = rot180(img);
+      A.sheen = VISION.sheen(A.frames, 126, 176);
       const qs = FP.nearCrops().flatMap(c => [FP.fingerprint(FP.resample(img, 126, 176, c)), FP.fingerprint(FP.resample(flip, 126, 176, c))]);
       const cards = scanCards(), res = cards.length ? FP.rank(qs, cards).slice(0, 5) : [];
       let num = null;
@@ -245,7 +261,7 @@ async function loop() {
       if (A.hold) { // attend que la carte précédente sorte du cadre
         if (top !== A.hold || !r.plausible) A.hold = null; else status('Retire la carte pour scanner la suivante');
       } else if (r.sure && top === A.lastTop) { // sûr sur 2 passes de suite
-        if (A.auto && A.mode === 'one') choose(r.list[0].card); else propose(true);
+        if ((A.auto && A.mode === 'one') || A.mode === 'batch') choose(r.list[0].card); else propose(true);
       }
       else if (r.plausible) {
         status(r.sure ? 'Presque…' : 'Recherche…');
@@ -276,9 +292,15 @@ function choose(c, fromEl) {
 }
 
 // Ajout depuis le scan : variante choisie, session en cours, booster en cours
+const scanVariant = () => (A.autoVar && A.sheen) || A.variant;
 function addFromScan(c, extra = {}) {
-  const e = addCard(c, { variant: A.variant, ...extra });
-  A.session.unshift({ c, variant: A.variant, t: Date.now() });
+  const variant = scanVariant();
+  const e = addCard(c, { variant, ...extra });
+  if (A.mode === 'batch') {
+    A.batch.n++; A.batch.v += FP.unitPrice(S.prices[c.id], variant, 'NM', S.coef).trend || 0;
+    renderBatch(true);
+  }
+  A.session.unshift({ c, variant, t: Date.now() });
   if (A.booster) { A.booster.cards.push(c.id); kv.set('boosters', S.boosters); }
   renderSession();
   return e;
@@ -367,6 +389,7 @@ async function scanDownload(st, why = '') {
 // Choix de l'extension en amont : le scan ne cherche que dedans (plus fiable, plus rapide)
 function fillScanSets() {
   const sel = $('#scan-set'); if (!sel) return;
+  $('#scan-lang') && ($('#scan-lang').value = S.lang);
   const ys = $('#scan-year'), years = [...new Set(allSets().map(LOGIC.year))].filter(y => y !== '—' && y !== '0000').sort().reverse();
   ys.innerHTML = `<option value="">Toutes années</option>${years.map(y => `<option ${A.year === y ? 'selected' : ''}>${y}</option>`).join('')}`;
   const inYear = s => !A.year || (s.releaseDate || '').startsWith(A.year);
@@ -429,19 +452,34 @@ function renderDiag() {
     <span>Base : ${S.fpSets.length} extension(s), ${withFp}/${S.fpCards.length} cartes avec empreinte${A.only ? ` · limité à ${esc(setName(A.only))}` : ''}${A.dl ? ` · téléchargement auto de ${esc(setName(A.dl))}` : ''}</span>
     ${L ? `<span>Bords : ${L.edges ? '<span class="up">trouvés</span>' : '<span class="down">non trouvés</span>'} · nom lu : ${DIAG.name ? '<span class="up">' + esc(DIAG.name) + '</span>' : '–'} <span class="muted">(« ${esc(DIAG.nameText || '')} »)</span> · numéro lu : ${L.num ? (L.num.promo ? L.num.promo + ' ' + L.num.num : L.num.num + '/' + L.num.tot + (L.num.code ? ' ' + L.num.code : '')) : '–'} <span class="muted">(« ${esc(DIAG.ocrText || '')} »)</span></span>
     <span>${L.res.slice(0, 3).map((r, i) => `${i + 1}. ${esc(r.card.name)} ${esc(r.card.localId)} <b>${r.d.toFixed(3)}</b>`).join(' · ')}</span>
+    <span>Reflets : ${A.sheen ? '<span class="up">' + (A.sheen === 'reverse' ? 'reverse' : 'holo') + '</span>' : 'rien de net'} (${A.frames.length}/3 images stables)</span>
     <span>Année © lue : ${A.cardYear || '–'} <span class="muted">(« ${esc(DIAG.yearText || '')} »)</span>${A.year ? ' · année choisie : ' + A.year : ''}${DIAG.guess ? ' · extensions probables : ' + esc(DIAG.guess) : ''}</span>
     <span>Décision : ${L.sure ? '<span class="up">sûr</span>' : 'pas sûr'} (sûr si &lt; ${FP.SURE_MAX} et écart &gt; ${FP.SURE_GAP}, ou numéro + image d'accord)</span>` : '<span>Aucune passe pour l\'instant</span>'}
     <span class="muted">${esc(DIAG.storage || '')}</span>`;
 }
 // Relancer : remet le scan à zéro (et la caméra si besoin)
 function retryScan() {
-  Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null, cardYear: null, lastKey: null, offering: false });
+  Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null, cardYear: null, lastKey: null, offering: false, sheen: null });
   $('#matches').innerHTML = '';
   if (DIAG.ocr === 'indisponible') { DIAG.ocr = 'pas encore utilisée'; DIAG.ocrErr = ''; ocrP = null; }
   const v = $('#video');
   if (!v.srcObject || v.srcObject.getVideoTracks().every(t => t.readyState === 'ended')) { stopCam(); startCam(); }
   else { clearTimeout(A.timer); loop(); }
   status('Scan relancé');
+}
+
+// ---------- mode lot : compteur en direct ----------
+function renderBatch(bump) {
+  const el = $('#batchc');
+  el.hidden = A.mode !== 'batch';
+  if (el.hidden) return;
+  el.innerHTML = `<span>📦 <b>${A.batch.n}</b> carte(s) · <b>${eur(A.batch.v)}</b></span><button class="primary small" id="batch-end">Terminer</button>`;
+  if (bump) { el.classList.remove('bump2'); void el.offsetWidth; el.classList.add('bump2'); }
+  $('#batch-end').onclick = e => {
+    e.stopPropagation();
+    toast(`Lot terminé : <b>${A.batch.n}</b> carte(s) ajoutée(s), ${eur(A.batch.v)}`);
+    A.batch = { n: 0, v: 0 }; renderBatch();
+  };
 }
 
 // Animation : la carte est aspirée vers l'onglet Collection
@@ -532,7 +570,8 @@ function propose(sure) {
   const res = A.res, box = $('#matches'), list = sure ? res.slice(0, 1) : res;
   status(sure ? 'Carte reconnue' : 'Pas sûr : choisis la bonne carte');
   const g = A.mode === 'graded' ? A.grade || {} : null;
-  box.innerHTML = (sure ? '' : '<p class="muted">Touche la bonne carte pour l\'ajouter :</p>') + list.map((m, i) => `
+  const sv = A.sheen ? `<p class="small sheen">✨ ${A.sheen === 'reverse' ? 'Reverse' : 'Holo'} détecté${A.autoVar ? ' : sera ajoutée comme ça' : ' (coche « Variante auto » pour l\'utiliser)'}</p>` : '';
+  box.innerHTML = sv + (sure ? '' : '<p class="muted">Touche la bonne carte pour l\'ajouter :</p>') + list.map((m, i) => `
     <button class="match ${sure ? 'sure' : ''}" data-i="${i}">
       ${imgOf(m.card) ? `<img src="${esc(imgOf(m.card))}" alt="">` : ''}
       <span class="grow"><b>${esc(m.card.name)}</b><br><span class="muted">${esc(m.card.setName)} · n° ${esc(m.card.localId)}</span>${sure ? '<br><span class="add">Toucher pour ajouter</span>' : ''}</span>
@@ -633,7 +672,9 @@ function bindScanUI() {
     $('#btn-scan').textContent = A.mode === 'page' ? 'Analyser la page' : 'Choisir manuellement';
     $('#btn-scan').className = A.mode === 'page' ? 'primary big' : 'ghost big';
     $('#cam').classList.toggle('graded', A.mode === 'graded'); A.grade = null; A.hold = null;
-    A.paused = false; status({ page: 'Cadre toute la page du classeur, puis Analyser', graded: 'Cadre le boîtier entier, étiquette en haut' }[A.mode] || '');
+    if (A.mode === 'batch') A.batch = { n: 0, v: 0 };
+    renderBatch();
+    A.paused = false; status({ page: 'Cadre toute la page du classeur, puis Analyser', graded: 'Cadre le boîtier entier, étiquette en haut', batch: 'Pose les cartes une par une : chaque carte reconnue s\'ajoute toute seule' }[A.mode] || '');
   });
   $('#quick-form').onsubmit = e => { e.preventDefault(); quickAdd($('#quick-q').value); };
   $('#retry-scan').onclick = retryScan;
@@ -646,6 +687,9 @@ function bindScanUI() {
     if (est) DIAG.storage = `Stockage : ${Math.round(est.usage / 1e6)} Mo utilisés sur ${Math.round(est.quota / 1e6)} Mo · persistant : ${pers ? 'oui' : 'non'}`;
     renderDiag();
   };
+  kv.get('autovar').then(v => { A.autoVar = !!v; $('#autovar').checked = A.autoVar; });
+  $('#autovar').onchange = e => { A.autoVar = e.target.checked; kv.set('autovar', A.autoVar); };
+  $('#scan-lang').onchange = e => switchLang(e.target.value);
   kv.get('autoadd').then(v => { A.auto = !!v; $('#auto').checked = A.auto; });
   $('#auto').onchange = e => { A.auto = e.target.checked; kv.set('autoadd', A.auto); toast(A.auto ? 'Ajout auto : les cartes reconnues avec certitude s\'ajoutent seules' : 'Ajout auto désactivé'); };
 }

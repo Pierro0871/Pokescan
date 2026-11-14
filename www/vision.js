@@ -130,6 +130,22 @@
     return ys.length ? Math.max(...ys) : null;
   }
 
-  const api = { parseYear, parseGrade, findCard, findCards, orderCorners, warp, median, parseNumber };
+  // Reflets : variation de luminosité d'une image à l'autre (carte redressée, téléphone qui bouge un peu).
+  // Ça brille hors de l'illustration -> 'reverse' ; dans l'illustration -> 'holo' ; sinon null.
+  function sheen(frames, w, h) {
+    if (frames.length < 3) return null;
+    let a = 0, na = 0, o = 0, no = 0;
+    for (let y = Math.round(h * 0.05); y < h * 0.95; y++) for (let x = Math.round(w * 0.05); x < w * 0.95; x++) {
+      const i = (y * w + x) * 4;
+      let lo = 255, hi = 0;
+      for (const f of frames) { const l = (f[i] * 3 + f[i + 1] * 6 + f[i + 2]) / 10; if (l < lo) lo = l; if (l > hi) hi = l; }
+      if (x > w * 0.08 && x < w * 0.92 && y > h * 0.10 && y < h * 0.49) { a += hi - lo; na++; } else { o += hi - lo; no++; }
+    }
+    const A = a / na, O = o / no;
+    if (Math.max(A, O) < 12) return null; // pas assez de reflets pour juger
+    return O > A * 1.5 ? 'reverse' : A > O * 1.5 ? 'holo' : null;
+  }
+
+  const api = { sheen, parseYear, parseGrade, findCard, findCards, orderCorners, warp, median, parseNumber };
   if (typeof module !== 'undefined') module.exports = api; else root.VISION = api;
 })(this);

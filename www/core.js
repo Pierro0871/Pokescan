@@ -10,6 +10,11 @@ const pct = n => n == null ? '' : (n > 0 ? '+' : '') + Math.round(n * 100) + ' %
 const norm = LOGIC.norm;
 const VARIANTS = { normal: 'Normale', reverse: 'Reverse', holo: 'Holo' };
 const today = () => new Date().toISOString().slice(0, 10);
+const LANGS = { fr: 'Français', en: 'English', de: 'Deutsch', it: 'Italiano', es: 'Español', pt: 'Português', ja: '日本語' };
+const FLAG = { fr: '🇫🇷', en: '🇬🇧', de: '🇩🇪', it: '🇮🇹', es: '🇪🇸', pt: '🇵🇹', ja: '🇯🇵' };
+// Clé de stockage propre à la langue (le français garde les clés d'origine)
+const LK = k => S.lang === 'fr' ? k : k + '@' + S.lang;
+const langOf = e => e.lang || 'fr';
 
 // ---------- stockage (IndexedDB, clé/valeur) ----------
 const kv = (() => {
@@ -39,7 +44,7 @@ async function nativeGet(url, responseType) {
   if (r.status >= 400) throw new Error('HTTP ' + r.status);
   return r.data;
 }
-async function getJSON(path, lang = 'fr') {
+async function getJSON(path, lang = S.lang) {
   const url = API + lang + path;
   if (NATIVE) { const d = await nativeGet(url, 'json'); return typeof d === 'string' ? JSON.parse(d) : d; }
   const r = await fetch(url); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
@@ -58,7 +63,7 @@ function openExternal(url) { if (NATIVE) location.href = url; else window.open(u
 
 // ---------- état ----------
 const S = {
-  coll: [], prices: {}, coef: { ...FP.DEFAULT_COEF }, catalog: null, fpSets: [], fpCards: [], view: 'scan',
+  lang: 'fr', coll: [], prices: {}, coef: { ...FP.DEFAULT_COEF }, catalog: null, fpSets: [], fpCards: [], view: 'scan',
   meta: {},      // cardId -> { r: rareté, t: types, i: illustrateur, d: n° Pokédex }
   hist: [],      // historique des ajouts/retraits
   valhist: {},   // date -> valeur totale
@@ -66,7 +71,7 @@ const S = {
   thumbs: {},    // cardId -> miniature (data URL) des extensions téléchargées
   thumbSets: [], ach: [], theme: 'auto', collF: { q: '', sort: 'serie', state: '', serie: '', year: '' },
 };
-const ownedIds = () => new Set(S.coll.map(e => e.cardId));
+const ownedIds = (lang = S.lang) => new Set(S.coll.filter(e => !lang || langOf(e) === lang).map(e => e.cardId));
 const allSets = () => (S.catalog || []).flatMap(s => s.sets.map(st => ({ ...st, serie: s.id, serieName: s.name })));
 const setInfo = id => allSets().find(s => s.id === id);
 const setName = id => id === 'perso' ? 'Cartes perso' : setInfo(id)?.name || id;
@@ -75,16 +80,17 @@ const imgOf = (c, q = 'low') => c.photo || (q === 'low' && S.thumbs[c.id || c.ca
 // Pas d'image dans la base (promos récentes…) : on tente l'adresse habituelle, puis l'anglais et le japonais (voir imgErr)
 function guessImg(c, q = 'low') {
   const sid = c.setId || (c.id && c.localId != null ? setIdOf(c) : ''), st = sid && setInfo(sid);
-  return st && c.localId ? `https://assets.tcgdex.net/fr/${st.serie}/${sid}/${c.localId}/${q}.webp` : '';
+  return st && c.localId ? `https://assets.tcgdex.net/${S.lang}/${st.serie}/${sid}/${c.localId}/${q}.webp` : '';
 }
-const imgBases = (c, sid) => { const st = setInfo(sid); return st ? ['fr', 'en', 'ja'].map(l => `https://assets.tcgdex.net/${l}/${st.serie}/${sid}/${c.localId}`) : []; };
+const imgLangs = () => [...new Set([S.lang, 'en', 'fr', 'ja'])];
+const imgBases = (c, sid) => { const st = setInfo(sid); return st ? imgLangs().map(l => `https://assets.tcgdex.net/${l}/${st.serie}/${sid}/${c.localId}`) : []; };
 // Image introuvable : langue suivante (fr -> en -> ja), puis adresses de secours (data-alt), sinon on la masque
 function imgErr(im) {
   const src = im.getAttribute('src') || '';
   if (!src || src.startsWith('data:')) return void im.classList.add('broken');
   // coupure réseau passagère : on retente une fois la même adresse avant de changer de langue
   if (!im.dataset.retry) { im.dataset.retry = '1'; setTimeout(() => { im.removeAttribute('src'); im.src = src; }, 1500); return; }
-  const m = src.match(/assets\.tcgdex\.net\/(fr|en|ja)\//), next = m && { fr: 'en', en: 'ja' }[m[1]];
+  const m = src.match(/assets\.tcgdex\.net\/([a-z-]+)\//), next = m && { fr: 'en', de: 'en', it: 'en', es: 'en', pt: 'en', en: S.lang === 'en' ? 'fr' : 'ja', ja: null }[m[1]];
   if (next) { im.dataset.retry = ''; im.src = src.replace(`/${m[1]}/`, `/${next}/`); return; }
   const alt = (im.dataset.alt || '').split('|').filter(Boolean);
   if (alt.length) { im.dataset.alt = alt.slice(1).join('|'); im.src = alt[0]; return; }
@@ -94,7 +100,7 @@ function imgErr(im) {
 document.addEventListener('error', e => { if (e.target.tagName === 'IMG') imgErr(e.target); }, true);
 // Logo d'une extension (symbole en secours)
 function setLogo(st, cls = 'logo') {
-  const logo = st.logo ? st.logo + '.png' : `https://assets.tcgdex.net/fr/${st.serie}/${st.id}/logo.png`;
+  const logo = st.logo ? st.logo + '.png' : `https://assets.tcgdex.net/${S.lang}/${st.serie}/${st.id}/logo.png`;
   const sym = st.symbol ? st.symbol + '.png' : `https://assets.tcgdex.net/univ/${st.serie}/${st.id}/symbol.png`;
   return `<img class="${cls}" src="${esc(logo)}" data-alt="${esc(sym)}" alt="" loading="lazy">`;
 }
@@ -168,6 +174,7 @@ function addCard(c, extra = {}) {
     cardId: c.id, setId: c.setId || setIdOf(c), setName: c.setName || setName(c.setId || setIdOf(c)),
     localId: c.localId, name: c.name, image: c.image, variant: defaultVariant(c), cond: 'NM', qty: 1, note: '', added: Date.now(), ...extra,
   };
+  if (S.lang !== 'fr' && !e.lang) e.lang = S.lang;
   if (c.photo) e.photo = c.photo;
   FP.addEntry(S.coll, e);
   rememberMeta(c);
@@ -218,7 +225,7 @@ async function loadCatalog(withDates = true) {
   const order = series.map(s => s.id);
   S.catalog = full.sort((a, b) => order.indexOf(b.id) - order.indexOf(a.id))
     .map(s => ({ id: s.id, name: s.name, sets: [...(s.sets || [])].reverse().map(st => ({ ...st, releaseDate: old[st.id]?.releaseDate })) }));
-  await kv.set('catalog', S.catalog);
+  await kv.set(LK('catalog'), S.catalog);
   if (withDates) loadDates();
   S.redrawColl?.();
 }
@@ -228,16 +235,16 @@ async function loadDates() {
   if (!todo.length) return;
   const dates = {};
   await pool(todo, 6, async st => {
-    try { const d = await getJSON('/sets/' + encodeURIComponent(st.id)); dates[st.id] = d.releaseDate || '0000'; kv.set('set:' + st.id, d); } catch { }
+    try { const d = await getJSON('/sets/' + encodeURIComponent(st.id)); dates[st.id] = d.releaseDate || '0000'; kv.set(LK('set:' + st.id), d); } catch { }
   });
   for (const s of S.catalog) for (const st of s.sets) if (dates[st.id]) st.releaseDate = dates[st.id];
-  await kv.set('catalog', S.catalog);
+  await kv.set(LK('catalog'), S.catalog);
   S.redrawColl?.();
 }
 
 async function getSet(id) {
-  const fresh = getJSON('/sets/' + encodeURIComponent(id)).then(s => (kv.set('set:' + id, s), s));
-  const cached = await kv.get('set:' + id);
+  const k = LK('set:' + id), fresh = getJSON('/sets/' + encodeURIComponent(id)).then(s => (kv.set(k, s), s));
+  const cached = await kv.get(k);
   if (cached) { fresh.catch(() => { }); return cached; } // cache d'abord, rafraîchi en fond
   return fresh;
 }
@@ -258,7 +265,7 @@ async function downloadSet(set, onProg) {
       if (d.pricing?.cardmarket) S.prices[c.id] = d.pricing.cardmarket;
     } catch { }
     if (!c.image) { // image FR absente (ex. promos récentes) : même illustration en anglais
-      try { card.image = (await getJSON('/cards/' + encodeURIComponent(c.id), 'en')).image; } catch { }
+      if (S.lang !== 'en') try { card.image = (await getJSON('/cards/' + encodeURIComponent(c.id), 'en')).image; } catch { }
     }
     // dernier recours : adresses habituelles des images (fr, en, ja)
     const bases = card.image ? [card.image] : imgBases(c, set.id);
@@ -275,30 +282,52 @@ async function downloadSet(set, onProg) {
     out.push(card);
     onProg && onProg(++done, cards.length);
   });
-  await kv.set('fp:' + set.id, out);
-  await kv.set('thumb:' + set.id, thumbs);
+  await kv.set(LK('fp:' + set.id), out);
+  await kv.set(LK('thumb:' + set.id), thumbs);
   Object.assign(S.thumbs, thumbs);
   await kv.set('prices', S.prices);
   if (!S.fpSets.includes(set.id)) S.fpSets.push(set.id);
   if (!S.thumbSets.includes(set.id)) S.thumbSets.push(set.id);
-  await kv.set('fpsets', S.fpSets); await kv.set('thumbsets', S.thumbSets);
+  await kv.set(LK('fpsets'), S.fpSets); await kv.set(LK('thumbsets'), S.thumbSets);
   S.fpCards = S.fpCards.filter(c => c.setId !== set.id).concat(out);
   afterChange();
   return noImg;
 }
 // Miniatures seules (extension déjà téléchargée avant leur arrivée) : sans retélécharger prix et empreintes
 async function addThumbs(setId, onProg) {
-  const cards = (await kv.get('fp:' + setId)) || [], thumbs = {}, tc = document.createElement('canvas');
+  const cards = (await kv.get(LK('fp:' + setId))) || [], thumbs = {}, tc = document.createElement('canvas');
   tc.width = 126; tc.height = 176;
   let done = 0;
   await pool(cards.filter(c => c.image), 6, async c => {
     try { tc.getContext('2d').drawImage(await getImage(c.image + '/low.webp'), 0, 0, 126, 176); thumbs[c.id] = tc.toDataURL('image/webp', 0.7); } catch { }
     onProg && onProg(++done, cards.length);
   });
-  await kv.set('thumb:' + setId, thumbs); Object.assign(S.thumbs, thumbs);
-  if (!S.thumbSets.includes(setId)) { S.thumbSets.push(setId); await kv.set('thumbsets', S.thumbSets); }
+  await kv.set(LK('thumb:' + setId), thumbs); Object.assign(S.thumbs, thumbs);
+  if (!S.thumbSets.includes(setId)) { S.thumbSets.push(setId); await kv.set(LK('thumbsets'), S.thumbSets); }
 }
-async function loadThumbs(setId) { if (S.thumbSets.includes(setId)) Object.assign(S.thumbs, (await kv.get('thumb:' + setId)) || {}); }
+async function loadThumbs(setId) { if (S.thumbSets.includes(setId)) Object.assign(S.thumbs, (await kv.get(LK('thumb:' + setId))) || {}); }
+
+// Changement de langue : catalogue, extensions activées et empreintes de cette langue
+async function loadLang(lang) {
+  S.lang = LANGS[lang] ? lang : 'fr';
+  const g = async (k, d) => (await kv.get(LK(k))) ?? d;
+  S.catalog = (await kv.get(LK('catalog'))) || null;
+  S.fpSets = await g('fpsets', []); S.thumbSets = await g('thumbsets', []);
+  S.fpCards = []; S.thumbs = {};
+  for (const id of S.fpSets) S.fpCards.push(...((await kv.get(LK('fp:' + id))) || []));
+  document.documentElement.lang = S.lang;
+}
+async function switchLang(lang) {
+  if (lang === S.lang) return;
+  kv.set('lang', lang);
+  await loadLang(lang);
+  if (!S.catalog) loadCatalog().catch(err => toast('Catalogue indisponible : ' + esc(err.message))); else loadDates().catch(() => { });
+  $$('.langsel').forEach(x => x.value = S.lang);
+  if (S.view === 'coll') renderColl();
+  if (S.view === 'scan') { fillScanSets(); retryScan(); }
+  toast(`${FLAG[S.lang]} Langue : ${LANGS[S.lang]}`);
+}
+const langSelect = () => `<select class="langsel" aria-label="Langue des cartes">${Object.entries(LANGS).map(([k, l]) => `<option value="${k}" ${S.lang === k ? 'selected' : ''}>${FLAG[k]} ${l}</option>`).join('')}</select>`;
 
 // ---------- fiche carte ----------
 async function openCard(c, onClose) {
@@ -317,7 +346,7 @@ async function openCard(c, onClose) {
 
 function renderCard(c) {
   S.sheetCard = c;
-  const p = S.prices[c.id], entries = S.coll.filter(e => e.cardId === c.id), m = S.meta[c.id], perso = c.id.startsWith('perso-');
+  const p = S.prices[c.id], entries = S.coll.filter(e => e.cardId === c.id && (c.id.startsWith('perso-') || langOf(e) === S.lang)), m = S.meta[c.id], perso = c.id.startsWith('perso-');
   const line = v => { const u = FP.unitPrice(p, v, 'NM', S.coef); return `<tr><td>${VARIANTS[v]}</td><td>${eur(u.trend)}</td><td>${eur(u.avg)}</td></tr>`; };
   const ch = LOGIC.priceChange(p);
   const im = imgOf(c, 'high');
@@ -331,7 +360,7 @@ function renderCard(c) {
       <p class="muted small">Cardmarket, Near Mint${p?.updated ? ' · ' + new Date(p.updated).toLocaleDateString('fr-FR') : ''}${p ? '' : ' · pas de prix connu'}${ch != null ? ` · <span class="${ch >= 0 ? 'up' : 'down'}">${pct(ch)} sur 7 j</span>` : ''}</p>
       <button class="ghost small" id="cm">Voir sur Cardmarket ↗</button>`}
       ${oddsHTML(c)}
-      <button class="ghost small" id="v3d">🔮 Vue 3D</button></div>
+      <div class="row"><button class="ghost small" id="v3d">🔮 Vue 3D</button>${!perso && m?.d?.length ? '<button class="ghost small" id="allof">📚 Toutes ses cartes</button>' : ''}</div></div>
     </div>
     <h2>Mes exemplaires (${entries.reduce((a, e) => a + e.qty, 0)})</h2>
     ${entries.map(e => `
@@ -339,6 +368,7 @@ function renderCard(c) {
         <div class="row">
           <select data-k="variant">${Object.entries(VARIANTS).map(([k, l]) => `<option value="${k}" ${e.variant === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
           <select data-k="cond">${FP.CONDS.map(k => `<option value="${k}" ${e.cond === k ? 'selected' : ''}>${FP.COND_LABEL[k]}</option>`).join('')}</select>
+          <select data-k="lang" class="langpick">${Object.keys(LANGS).map(k => `<option value="${k}" ${langOf(e) === k ? 'selected' : ''}>${FLAG[k]}</option>`).join('')}</select>
         </div>
         <div class="row">
           <button class="qty" data-d="-1">−</button><b>${e.qty}</b><button class="qty" data-d="1">+</button>
@@ -359,6 +389,9 @@ function renderCard(c) {
     <div class="row"><button class="primary" id="add">+ Ajouter un exemplaire</button><button class="ghost" id="close">Fermer</button></div>`;
   $('#sheet').hidden = false;
   $('#v3d').onclick = () => open3D(c);
+  $('#allof') && ($('#allof').onclick = async () => {
+    const no = m.d[0], names = await dexNames(); closeSheet(); openPokemon(names[no - 1] || c.name, no);
+  });
   $('#cm') && ($('#cm').onclick = () => openExternal(`https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${encodeURIComponent(c.name + ' ' + c.localId)}`));
   $('#perso-price') && ($('#perso-price').onchange = e => {
     const v = parseFloat(e.target.value);
@@ -366,13 +399,14 @@ function renderCard(c) {
     kv.set('prices', S.prices); afterChange();
   });
   // nouvelle ligne séparée pour pouvoir lui donner un autre état ; les lignes identiques sont fusionnées à la fermeture
-  $('#add').onclick = () => { S.coll.push({ cardId: c.id, setId: c.setId, setName: c.setName, localId: c.localId, name: c.name, image: c.image, photo: c.photo, variant: defaultVariant(c), cond: 'NM', qty: 1, note: '', added: Date.now() }); save(); renderCard(c); };
+  $('#add').onclick = () => { S.coll.push({ cardId: c.id, setId: c.setId, setName: c.setName, localId: c.localId, name: c.name, image: c.image, photo: c.photo, variant: defaultVariant(c), cond: 'NM', qty: 1, note: '', added: Date.now(), ...(S.lang !== 'fr' ? { lang: S.lang } : {}) }); save(); renderCard(c); };
   $('#close').onclick = closeSheet;
   $$('.entry').forEach(row => {
     const e = S.coll[+row.dataset.i];
     row.querySelectorAll('[data-k]').forEach(inp => inp.onchange = () => {
       if (inp.dataset.k === 'paid') { const v = parseFloat(inp.value); if (isFinite(v) && v >= 0) e.paid = v; else delete e.paid; }
       else if (inp.dataset.k === 'tags') { const t = [...new Set(inp.value.split(',').map(x => x.trim()).filter(Boolean))]; if (t.length) e.tags = t; else delete e.tags; }
+      else if (inp.dataset.k === 'lang') { if (inp.value === 'fr') delete e.lang; else e.lang = inp.value; save(); return renderCard(c); }
       else e[inp.dataset.k] = inp.value;
       save();
     });
