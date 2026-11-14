@@ -111,12 +111,20 @@ function ocr(canvas, params) {
   return withTimeout(run, 4000).catch(() => ''); // shortcut: une lecture trop lente est abandonnée, l'image seule décide
 }
 // Morceau de l'image redressée (lignes y0..y0+bh) -> canvas agrandi ×2, gris contrasté
-function strip(px, w, y0, bh) {
+function strip(px, w, y0, bh, x0 = 0, x1 = w) {
   const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = bh;
   tmp.getContext('2d').putImageData(new ImageData(px.slice(y0 * w * 4, (y0 + bh) * w * 4), w, bh), 0, 0);
-  const c = document.createElement('canvas'); c.width = w * 2; c.height = bh * 2;
-  const ctx = c.getContext('2d'); ctx.filter = 'grayscale(1) contrast(1.6)'; ctx.drawImage(tmp, 0, 0, c.width, c.height);
+  const c = document.createElement('canvas'); c.width = (x1 - x0) * 2; c.height = bh * 2;
+  const ctx = c.getContext('2d'); ctx.filter = 'grayscale(1) contrast(1.6)'; ctx.drawImage(tmp, x0, 0, x1 - x0, bh, 0, 0, c.width, c.height);
   return c;
+}
+// Nom en haut de la carte (texte brut, nettoyé ensuite)
+async function readName(hi, w, h) {
+  try {
+    const t = await ocr(strip(hi, w, Math.round(h * 0.025), Math.round(h * 0.07), Math.round(w * 0.05), Math.round(w * 0.78)), { tessedit_char_whitelist: '', tessedit_pageseg_mode: '7' });
+    DIAG.nameText = t.trim().slice(0, 40);
+    return t;
+  } catch { return ''; }
 }
 async function readNumber(hi, w, h) {
   if (!window.Tesseract) return null;
@@ -187,10 +195,19 @@ async function pass() {
       let num = null;
       DIAG.ocrText = '';
       // lecture du numéro seulement si le moteur est prêt : on ne l'attend jamais (il se charge en fond)
-      if (DIAG.ocr === 'prête') { if (!res.length || res[0].d < FP.LOOSE_MAX) num = await readNumber(VISION.warp(cv, big, bw, bh, qb, 630, 880), 630, 880); }
+      A.hiCache = null;
+      if (DIAG.ocr === 'prête') { if (!res.length || res[0].d < FP.LOOSE_MAX) num = await readNumber(A.hiCache = VISION.warp(cv, big, bw, bh, qb, 630, 880), 630, 880); }
       else ocrWorker();
       if (!res.length) { if (num) autoDetect(num); DIAG.last = { edges: true, res, num, sure: false }; drawDebug(qv, cr); return null; }
-      const dec = FP.decide(qs, res, cards, num, officialOf);
+      let dec = FP.decide(qs, res, cards, num, officialOf);
+      DIAG.nameText = ''; DIAG.name = null;
+      // pas sûr : on lit aussi le nom du Pokémon et on cherche avec
+      if (!dec.sure && DIAG.ocr === 'prête') {
+        const hi = A.hiCache || VISION.warp(cv, big, bw, bh, qb, 630, 880);
+        const raw = await readName(hi, 630, 880);
+        const byName = decideByName(qs, res, cards, raw, num);
+        if (byName) dec = byName; else nameDetect(raw, num);
+      }
       if (num && !dec.matched) autoDetect(num);
       DIAG.last = { edges: true, res, num, sure: dec.sure };
       drawDebug(qv, cr);
@@ -246,7 +263,7 @@ function choose(c, fromEl) {
   const extra = A.mode === 'graded' && A.grade?.grade ? { grade: { co: A.grade.co || '?', g: A.grade.grade, cert: A.grade.cert || '' } } : {};
   addFromScan(c, extra);
   feedback('add');
-  flyToCollection(imgOf(c), (fromEl || $('#guide')).getBoundingClientRect());
+  flyCamera();
   A.grade = null;
   const cam = $('#cam'); cam.classList.remove('flash'); void cam.offsetWidth; cam.classList.add('flash');
   resume(A.res[0].card.id === c.id ? c.id : A.res[0].card.id);
@@ -262,6 +279,38 @@ function addFromScan(c, extra = {}) {
   return e;
 }
 
+// Nom lu proche d'un nom connu des extensions activées -> cette carte (le numéro, s'il est lu, départage)
+function decideByName(qs, res, cards, raw, num) {
+  const names = [...new Set(cards.map(c => c.name))], bn = LOGIC.bestName(raw, names);
+  if (!bn) return null;
+  DIAG.name = bn.name;
+  let cand = cards.filter(c => c.name === bn.name && c.fp);
+  if (num && !num.promo && cand.some(c => LOGIC.localNum(c) === num.num)) cand = cand.filter(c => LOGIC.localNum(c) === num.num);
+  if (!cand.length) return null;
+  const sc = cand.map(card => { let d = Infinity; for (const q of qs) d = Math.min(d, FP.distance(q, card.fp)); return { card, d }; }).sort((a, b) => a.d - b.d);
+  const best = sc[0], numOk = !!num && LOGIC.localNum(best.card) === num.num;
+  // sûr : nom + numéro d'accord, ou nom + image cohérente quand peu de versions de ce Pokémon
+  const sure = (numOk && best.d < FP.LOOSE_MAX + 0.04) || (best.d < 0.40 && (sc.length === 1 || sc[1].d - best.d > 0.04));
+  return { list: [best, ...res.filter(r => r.card.id !== best.card.id)].slice(0, 5), sure, matched: true, byName: true };
+}
+
+// Nom lu mais carte absente des extensions activées : on cherche ce Pokémon dans toute la base,
+// et si le numéro désigne une seule extension, on la télécharge (comme pour le numéro seul)
+async function nameDetect(raw, num) {
+  if (A.dl || A.only || !num) return;
+  const dex = await dexNames(), bn = LOGIC.bestName(raw, dex, 0.75);
+  if (!bn) return;
+  const key = bn.name + '|' + num.num;
+  if (A.lastName !== key) { A.lastName = key; return; } // lu deux fois de suite
+  let cards = [];
+  try { cards = await getJSON('/cards?name=' + encodeURIComponent(bn.name)); } catch { return; }
+  A.tried ||= new Set();
+  const sets = [...new Set(cards.filter(c => LOGIC.localNum(c) === num.num).map(c => setIdOf(c)))].map(setInfo)
+    .filter(st => st && !S.fpSets.includes(st.id) && !A.tried.has(st.id) && (num.promo || !num.tot || LOGIC.total(st) === num.tot || st.cardCount?.total === num.tot))
+    .sort((a, b) => (b.releaseDate || '').localeCompare(a.releaseDate || ''));
+  if (sets.length && sets.length <= 3) scanDownload(sets[0], `${bn.name} n° ${num.num}`);
+}
+
 // ---------- extension détectée par le numéro lu : téléchargement automatique ----------
 // "005/084" lu deux fois de suite sans carte connue -> extensions de 84 cartes non téléchargées -> la plus récente
 async function autoDetect(num) {
@@ -274,9 +323,13 @@ async function autoDetect(num) {
     : allSets().filter(s => s.cardCount?.official === num.tot);
   sets = sets.filter(s => !S.fpSets.includes(s.id) && !A.tried.has(s.id)).sort((a, b) => (b.releaseDate || '').localeCompare(a.releaseDate || ''));
   if (!sets.length || sets.length > 4) return; // trop d'extensions possibles : on ne devine pas
-  const st = sets[0];
+  scanDownload(sets[0]);
+}
+async function scanDownload(st, why = '') {
+  if (A.dl) return;
+  A.tried ||= new Set();
   A.tried.add(st.id); A.dl = st.id;
-  toast(`Extension détectée : <b>${esc(st.name)}</b> — téléchargement pour le scan…`);
+  toast(`Extension détectée${why ? ' (' + esc(why) + ')' : ''} : <b>${esc(st.name)}</b> — téléchargement pour le scan…`);
   try {
     await downloadSet(await getSet(st.id), (d, t) => status(`Téléchargement de ${st.name} : ${d}/${t}`));
     toast(`${esc(st.name)} est prête : rescanne la carte`); fillScanSets();
@@ -327,6 +380,7 @@ function drawDebug(q, cr) {
     const zone = (x0, y0, x1, y1) => [onQuad(q, x0, y0), onQuad(q, x1, y0), onQuad(q, x1, y1), onQuad(q, x0, y1)];
     poly(zone(C.x0, C.y0, C.x1, C.y1), '#4cc9f0', 'empreinte image');
     poly(zone(0, 0.9, 1, 0.99), '#ff4fd8', 'numéro');
+    poly(zone(0.05, 0.025, 0.78, 0.095), '#ffa94d', 'nom');
     if (A.mode === 'graded') { const up = (u, t) => ({ x: onQuad(q, u, 0).x + (q[0].x - q[3].x) * t, y: onQuad(q, u, 0).y + (q[0].y - q[3].y) * t }); poly([up(0, .36), up(1, .36), up(1, .04), up(0, .04)], '#ffd166', 'étiquette'); }
   } else { // pas de bords : zone d'empreinte dans le rectangle jaune
     const g = cr.guide, gx = g.x - cr.x, gy = g.y - cr.y;
@@ -342,7 +396,7 @@ function renderDiag() {
     <span>Caméra : ${v.videoWidth ? v.videoWidth + '×' + v.videoHeight : 'pas d\'image'} · passe : ${DIAG.ms ?? '–'} ms${DIAG.err ? ` · <span class="down">erreur : ${esc(DIAG.err)}</span>` : ''}</span>
     <span>Détection des bords : ${cvState} · lecture du numéro : ${DIAG.ocr}${DIAG.ocrErr ? ' (' + esc(DIAG.ocrErr) + ')' : ''}</span>
     <span>Base : ${S.fpSets.length} extension(s), ${withFp}/${S.fpCards.length} cartes avec empreinte${A.only ? ` · limité à ${esc(setName(A.only))}` : ''}${A.dl ? ` · téléchargement auto de ${esc(setName(A.dl))}` : ''}</span>
-    ${L ? `<span>Bords : ${L.edges ? '<span class="up">trouvés</span>' : '<span class="down">non trouvés</span>'} · numéro lu : ${L.num ? (L.num.promo ? L.num.promo + ' ' + L.num.num : L.num.num + '/' + L.num.tot + (L.num.code ? ' ' + L.num.code : '')) : '–'} <span class="muted">(« ${esc(DIAG.ocrText || '')} »)</span></span>
+    ${L ? `<span>Bords : ${L.edges ? '<span class="up">trouvés</span>' : '<span class="down">non trouvés</span>'} · nom lu : ${DIAG.name ? '<span class="up">' + esc(DIAG.name) + '</span>' : '–'} <span class="muted">(« ${esc(DIAG.nameText || '')} »)</span> · numéro lu : ${L.num ? (L.num.promo ? L.num.promo + ' ' + L.num.num : L.num.num + '/' + L.num.tot + (L.num.code ? ' ' + L.num.code : '')) : '–'} <span class="muted">(« ${esc(DIAG.ocrText || '')} »)</span></span>
     <span>${L.res.slice(0, 3).map((r, i) => `${i + 1}. ${esc(r.card.name)} ${esc(r.card.localId)} <b>${r.d.toFixed(3)}</b>`).join(' · ')}</span>
     <span>Décision : ${L.sure ? '<span class="up">sûr</span>' : 'pas sûr'} (sûr si &lt; ${FP.SURE_MAX} et écart &gt; ${FP.SURE_GAP}, ou numéro + image d'accord)</span>` : '<span>Aucune passe pour l\'instant</span>'}
     <span class="muted">${esc(DIAG.storage || '')}</span>`;
@@ -374,6 +428,30 @@ function flyToCollection(src, from) {
     { transform: `translate(${dx}px,${dy}px) scale(.05) rotate(600deg)`, opacity: .3 },
   ], { duration: 800, easing: 'cubic-bezier(.55,0,.85,.35)' });
   a.onfinish = () => { im.remove(); tab.classList.remove('bump'); void tab.offsetWidth; tab.classList.add('bump'); };
+}
+
+// Animation : tout l'écran caméra est aspiré vers l'onglet Collection (carte reconnue et ajoutée)
+function flyCamera() {
+  const v = $('#video'), tab = $('#tabs [data-view=coll]');
+  if (!v.videoWidth || !tab || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const cam = $('#cam').getBoundingClientRect(), to = tab.getBoundingClientRect();
+  const c = document.createElement('canvas'), k = Math.min(2, devicePixelRatio || 1);
+  c.width = Math.round(cam.width * k); c.height = Math.round(cam.height * k);
+  const s = Math.max(c.width / v.videoWidth, c.height / v.videoHeight); // même cadrage que la vidéo (cover)
+  c.getContext('2d').drawImage(v, (c.width - v.videoWidth * s) / 2, (c.height - v.videoHeight * s) / 2, v.videoWidth * s, v.videoHeight * s);
+  c.className = 'flycam';
+  Object.assign(c.style, { left: cam.left + 'px', top: cam.top + 'px', width: cam.width + 'px', height: cam.height + 'px' });
+  document.body.appendChild(c);
+  const dx = to.left + to.width / 2 - (cam.left + cam.width / 2), dy = to.top + to.height / 2 - (cam.top + cam.height / 2);
+  c.animate([
+    { transform: 'translate(0,0) scale(1) rotate(0deg)', borderRadius: '16px', filter: 'brightness(1)', opacity: 1 },
+    { transform: 'translate(0,0) scale(.94) rotate(-3deg)', borderRadius: '24px', filter: 'brightness(1.35)', opacity: 1, offset: 0.18 },
+    { transform: `translate(${dx * 0.5}px,${dy * 0.42}px) scale(.38) rotate(200deg)`, borderRadius: '40%', filter: 'brightness(1.6) blur(1px)', opacity: .95, offset: 0.6 },
+    { transform: `translate(${dx}px,${dy}px) scale(.02) rotate(560deg)`, borderRadius: '50%', filter: 'brightness(2) blur(3px)', opacity: .2 },
+  ], { duration: 950, easing: 'cubic-bezier(.5,0,.85,.35)' }).onfinish = () => {
+    c.remove(); tab.classList.remove('bump'); void tab.offsetWidth; tab.classList.add('bump');
+  };
+  const cm = $('#cam'); cm.classList.remove('vortex'); void cm.offsetWidth; cm.classList.add('vortex');
 }
 
 // ---------- session de scan ----------

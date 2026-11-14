@@ -92,3 +92,12 @@ console.log('OK');
   assert.strictEqual(L.packOdds(set.slice(0, 2).map(c => ({ ...c, rarity: 'Aucune' })), 'y0', true).any, 1);
   console.log('OK probabilités');
 }
+{
+  assert(L.similar('Poltchageist', 'Poltchageist') === 1);
+  assert(L.similar('Poltchagelst', 'Poltchageist') > 0.85);
+  assert.strictEqual(L.cleanName('BASE Poltchageist PV30'), 'Poltchageist');
+  assert.deepStrictEqual(L.bestName('BASE  Dracaufeu ex PV 330', ['Pikachu', 'Dracaufeu ex', 'Dracaufeu']).name, 'Dracaufeu ex');
+  assert.strictEqual(L.bestName('Méga-Dracolosse ex', ['Méga-Dracolosse ex', 'Dracolosse']).name, 'Méga-Dracolosse ex');
+  assert.strictEqual(L.bestName('zzzz qqq', ['Pikachu']), null);
+  console.log('OK noms');
+}

@@ -523,7 +523,7 @@ async function init() {
   S.fpSets = await g('fpsets', []);
   S.thumbSets = await g('thumbsets', []);
   S.meta = await g('meta', {}); S.hist = await g('hist', []); S.valhist = await g('valhist', {});
-  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []);
+  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []); S.cardBack = await g('cardback', null);
   applyTheme(); matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
   for (const id of S.fpSets) S.fpCards.push(...((await kv.get('fp:' + id)) || []));
   $$('#tabs button').forEach(b => b.onclick = () => show(b.dataset.view));

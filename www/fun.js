@@ -265,13 +265,23 @@ function open3D(c) {
       <div class="s3d"><div class="c3d">
         <div class="face front fx-${fx}">${imgOf(c, 'high') ? `<img src="${esc(imgOf(c, 'high'))}" alt="${esc(c.name)}" draggable="false">` : `<span class="noimg">${esc(c.name)}</span>`}<i class="foil"></i><i class="spark"></i><i class="glare"></i></div>
         <div class="face edge e1"></div><div class="face edge e2"></div>
-        <div class="face back"></div>
+        <div class="face back ${S.cardBack ? 'custom' : ''}" ${S.cardBack ? `style="background-image:url('${S.cardBack}')"` : ''}>${S.cardBack ? '' : '<span class="br tl"></span><span class="br tr"></span><span class="br bl"></span><span class="br br2"></span><b>PokeScan</b>'}</div>
       </div></div>
       <div class="vcap"><b>${esc(c.name)}</b><span>${esc(FX[fx])}${S.meta[c.id]?.r ? ' · ' + esc(S.meta[c.id].r) : ''}</span>
         <div class="row center3d">${Object.entries(VARIANTS).map(([k, l]) => `<button class="chip ${variant === k ? 'on' : ''}" data-v3="${k}">${l}</button>`).join('')}</div>
+        <div class="row center3d"><label class="chip">🖼️ Mon image de dos<input type="file" accept="image/*" id="back-file" hidden></label>${S.cardBack ? '<button class="chip" id="back-reset">Dos PokeScan</button>' : ''}</div>
         <small>Fais glisser pour tourner · double-tape pour retourner · penche le téléphone</small></div>`;
     v.querySelector('.vclose').onclick = close;
     v.querySelectorAll('[data-v3]').forEach(b => b.onclick = e => { e.stopPropagation(); variant = b.dataset.v3; draw(); });
+    // dos personnalisé : une image choisie par l'utilisateur, recadrée au format carte
+    v.querySelector('#back-file').onchange = async e => {
+      const f = e.target.files[0]; if (!f) return;
+      const img = await getImage(URL.createObjectURL(f)), cv = document.createElement('canvas'); cv.width = 630; cv.height = 880;
+      const k = Math.max(630 / img.width, 880 / img.height);
+      cv.getContext('2d').drawImage(img, (630 - img.width * k) / 2, (880 - img.height * k) / 2, img.width * k, img.height * k);
+      S.cardBack = cv.toDataURL('image/jpeg', 0.85); kv.set('cardback', S.cardBack); flip = 180; draw();
+    };
+    v.querySelector('#back-reset') && (v.querySelector('#back-reset').onclick = e => { e.stopPropagation(); S.cardBack = null; kv.set('cardback', null); draw(); });
   };
   const frame = () => {
     if (!drag) { // inertie, puis léger balancement
@@ -285,7 +295,7 @@ function open3D(c) {
     v.style.setProperty('--px', (50 + sx * 60).toFixed(1) + '%'); v.style.setProperty('--py', (50 - sy * 80).toFixed(1) + '%');
     raf = requestAnimationFrame(frame);
   };
-  const down = e => { if (e.target.closest('button')) return; drag = { x: e.clientX, y: e.clientY, t: performance.now() }; v.setPointerCapture?.(e.pointerId); };
+  const down = e => { if (e.target.closest('button,label,input')) return; drag = { x: e.clientX, y: e.clientY, t: performance.now() }; v.setPointerCapture?.(e.pointerId); };
   const move = e => {
     if (!drag) return;
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
@@ -294,7 +304,7 @@ function open3D(c) {
   };
   const up = () => { drag = null; };
   let lastTap = 0;
-  const tap = e => { if (e.target.closest('button')) return; const t = Date.now(); if (t - lastTap < 300) { flip += 180; vy = 9; } lastTap = t; };
+  const tap = e => { if (e.target.closest('button,label,input')) return; const t = Date.now(); if (t - lastTap < 300) { flip += 180; vy = 9; } lastTap = t; };
   const ori = e => { if (e.gamma == null) return; gx = Math.max(-25, Math.min(25, e.gamma)) * 0.8; gy = -Math.max(-25, Math.min(25, e.beta - 45)) * 0.6; };
   function close() {
     cancelAnimationFrame(raf); v.hidden = true; v.innerHTML = '';

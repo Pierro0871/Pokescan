@@ -149,6 +149,36 @@
     return { normal, reverse, any, tier: t, packs50: packs(0.5), packs90: packs(0.9) };
   }
 
+  // ---------- nom lu en haut de la carte ----------
+  // Ressemblance 0..1 entre deux noms (distance d'édition, sans accents ni casse)
+  function similar(a, b) {
+    a = norm(a).replace(/[^a-z0-9]/g, ''); b = norm(b).replace(/[^a-z0-9]/g, '');
+    if (!a || !b) return 0;
+    const m = a.length, n = b.length, d = Array.from({ length: m + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= n; j++) d[0][j] = j;
+    for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return 1 - d[m][n] / Math.max(m, n);
+  }
+  // Texte OCR du haut de carte -> nom probable (sans "BASE", "PV 30", niveaux…)
+  function cleanName(text) {
+    return String(text).replace(/\n/g, ' ').replace(/[0-9]+/g, ' ').replace(/\b(BASE|DE BASE|NIVEAU|STAGE|BASIC|PV|HP|TALENT)\b/gi, ' ')
+      .replace(/[^A-Za-zÀ-ÿ' -]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  // Meilleur nom d'une liste pour le texte lu (null si trop différent)
+  function bestName(text, names, min = 0.7) {
+    const t = cleanName(text);
+    if (t.length < 3) return null;
+    let best = null, bs = 0;
+    for (const n of names) {
+      // le texte lu peut contenir des débris autour du nom : on teste aussi des morceaux de la taille du nom
+      let s = similar(t, n);
+      const words = t.split(' ');
+      for (let i = 0; i < words.length; i++) for (let j = i + 1; j <= words.length; j++) s = Math.max(s, similar(words.slice(i, j).join(' '), n));
+      if (s > bs) { bs = s; best = n; }
+    }
+    return bs >= min ? { name: best, score: bs } : null;
+  }
+
   // ---------- succès ----------
   // s : { qty, unique, value, setsDone, species, dups, boosters, maxCard, scans }
   function achievements(s) {
@@ -226,6 +256,6 @@
     return { theyCanGive: give, iCanGive: get };
   }
 
-  const api = { packOdds, deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
+  const api = { similar, cleanName, bestName, packOdds, deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
   if (typeof module !== 'undefined') module.exports = api; else root.LOGIC = api;
 })(this);

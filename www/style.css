@@ -177,8 +177,14 @@ img.broken { visibility: hidden; }
 .c3d .front { transform: translateZ(1.6px); box-shadow: 0 0 0 1px rgba(255,255,255,.08); }
 .c3d .front img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 .c3d .edge { background: #cfc8b0; } .c3d .e1 { transform: translateZ(.5px); } .c3d .e2 { transform: translateZ(-.5px) rotateY(180deg); }
-.c3d .back { transform: rotateY(180deg) translateZ(1.6px); background: repeating-linear-gradient(45deg, #1a1d24 0 10px, #232733 10px 20px); border: 6px solid var(--acc); box-sizing: border-box; }
-.c3d .back::after { content: 'PokeScan'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--acc); font-weight: 800; font-size: 22px; transform: rotate(-30deg); }
+.c3d .back { transform: rotateY(180deg) translateZ(1.6px); box-sizing: border-box; border: 7px solid #e9e4d4;
+  background: radial-gradient(circle at 50% 50%, rgba(62,207,142,.25), transparent 45%), repeating-linear-gradient(135deg, rgba(255,255,255,.04) 0 2px, transparent 2px 9px), linear-gradient(160deg, #182033, #0b0e16 70%);
+  display: flex; align-items: center; justify-content: center; }
+.c3d .back.custom { background-size: cover; background-position: center; border-color: #e9e4d4; }
+.c3d .back b { color: var(--acc); font-weight: 900; font-size: 26px; letter-spacing: 1px; text-shadow: 0 0 18px rgba(255,203,5,.6); transform: rotate(-8deg); }
+.c3d .back .br { position: absolute; width: 22%; height: 16%; border: 0 solid #3ecf8e; filter: drop-shadow(0 0 6px #3ecf8e); }
+.c3d .back .tl { left: 14%; top: 14%; border-width: 5px 0 0 5px; border-top-left-radius: 8px; } .c3d .back .tr { right: 14%; top: 14%; border-width: 5px 5px 0 0; border-top-right-radius: 8px; }
+.c3d .back .bl { left: 14%; bottom: 14%; border-width: 0 0 5px 5px; border-bottom-left-radius: 8px; } .c3d .back .br2 { right: 14%; bottom: 14%; border-width: 0 5px 5px 0; border-bottom-right-radius: 8px; }
 .c3d i { position: absolute; inset: 0; pointer-events: none; }
 .c3d .glare { mix-blend-mode: overlay; background: radial-gradient(circle at var(--px) var(--py), rgba(255,255,255,.8), rgba(255,255,255,0) 50%); }
 .c3d .foil, .c3d .spark { display: none; }
@@ -201,3 +207,9 @@ img.broken { visibility: hidden; }
 #diag { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 8px 10px; margin: 6px 0; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
 #diag[hidden] { display: none; }
 #scan-set { width: 100%; margin: 0 0 8px; font-size: 14px; }
+/* ---- v10 : aspiration de l'écran caméra ---- */
+.flycam { position: fixed; z-index: 50; pointer-events: none; box-shadow: 0 0 40px rgba(62,207,142,.7); transform-origin: center; }
+#cam.vortex::after { content: ''; position: absolute; inset: 0; z-index: 3; pointer-events: none;
+  background: conic-gradient(from 0deg, transparent, rgba(62,207,142,.55), transparent 30%, rgba(255,203,5,.45), transparent 60%, rgba(62,207,142,.55), transparent);
+  -webkit-mask: radial-gradient(circle, transparent 18%, #000 60%); mask: radial-gradient(circle, transparent 18%, #000 60%); animation: vortex .9s ease-in forwards; }
+@keyframes vortex { from { opacity: 0; transform: rotate(0) scale(1.4); } 30% { opacity: 1; } to { opacity: 0; transform: rotate(540deg) scale(.2); } }
