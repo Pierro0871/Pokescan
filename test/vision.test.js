@@ -110,3 +110,10 @@ Promise.resolve(require('@techstark/opencv-js')).then(cv => {
   eq(V2.parseGrade('rien de lisible'), {});
   console.log('OK étiquettes gradées');
 }
+{
+  const V3 = require('../www/vision.js'), a = require('assert');
+  a.strictEqual(V3.parseYear('©2026 Pokémon/Nintendo/Creatures/GAME FREAK', 2027), 2026);
+  a.strictEqual(V3.parseYear('©1995, 96, 98 Nintendo, Creatures, GAMEFREAK ©1999 Wizards', 2027), 1999);
+  a.strictEqual(V3.parseYear('illisible'), null);
+  console.log('OK année');
+}

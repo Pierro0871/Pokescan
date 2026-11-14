@@ -88,7 +88,8 @@ const drawCorners = (q, cr) => drawQuads(q ? [q] : [], cr);
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('délai dépassé')), ms))]);
 const DIAG = { ocr: 'pas encore utilisée', last: null };
 // Cartes candidates : l'extension choisie en amont, sinon toutes les extensions activées
-const scanCards = () => A.only ? S.fpCards.filter(c => c.setId === A.only) : S.fpCards;
+const scanCards = () => A.only ? S.fpCards.filter(c => c.setId === A.only)
+  : A.year ? S.fpCards.filter(c => (setInfo(c.setId)?.releaseDate || '').startsWith(A.year)) : S.fpCards;
 let ocrP = null;
 function ocrWorker() {
   if (!window.Tesseract || DIAG.ocr === 'indisponible') return null;
@@ -198,17 +199,21 @@ async function pass() {
       A.hiCache = null;
       if (DIAG.ocr === 'prête') { if (!res.length || res[0].d < FP.LOOSE_MAX) num = await readNumber(A.hiCache = VISION.warp(cv, big, bw, bh, qb, 630, 880), 630, 880); }
       else ocrWorker();
-      if (!res.length) { if (num) autoDetect(num); DIAG.last = { edges: true, res, num, sure: false }; drawDebug(qv, cr); return null; }
+      if (!res.length) {
+        if (num) resolveSet(num, DIAG.ocr === 'prête' ? await readName(A.hiCache, 630, 880) : '', A.hiCache);
+        DIAG.last = { edges: true, res, num, sure: false }; drawDebug(qv, cr); return null;
+      }
       let dec = FP.decide(qs, res, cards, num, officialOf);
       DIAG.nameText = ''; DIAG.name = null;
+      let raw = '';
       // pas sûr : on lit aussi le nom du Pokémon et on cherche avec
       if (!dec.sure && DIAG.ocr === 'prête') {
         const hi = A.hiCache || VISION.warp(cv, big, bw, bh, qb, 630, 880);
-        const raw = await readName(hi, 630, 880);
+        raw = await readName(hi, 630, 880);
         const byName = decideByName(qs, res, cards, raw, num);
-        if (byName) dec = byName; else nameDetect(raw, num);
+        if (byName) dec = byName;
       }
-      if (num && !dec.matched) autoDetect(num);
+      if (num && !dec.matched) resolveSet(num, raw, A.hiCache);
       DIAG.last = { edges: true, res, num, sure: dec.sure };
       drawDebug(qv, cr);
       return { ...dec, plausible: true };
@@ -254,7 +259,7 @@ async function loop() {
 }
 
 function resume(holdId) {
-  A.grade = null;
+  A.grade = null; A.cardYear = null;
   A.hold = holdId; A.paused = false; A.doubtSince = 0; A.lastTop = null;
   $('#matches').innerHTML = ''; status();
 }
@@ -294,37 +299,59 @@ function decideByName(qs, res, cards, raw, num) {
   return { list: [best, ...res.filter(r => r.card.id !== best.card.id)].slice(0, 5), sure, matched: true, byName: true };
 }
 
-// Nom lu mais carte absente des extensions activées : on cherche ce Pokémon dans toute la base,
-// et si le numéro désigne une seule extension, on la télécharge (comme pour le numéro seul)
-async function nameDetect(raw, num) {
-  if (A.dl || A.only || !num) return;
-  const dex = await dexNames(), bn = LOGIC.bestName(raw, dex, 0.75);
-  if (!bn) return;
-  const key = bn.name + '|' + num.num;
-  if (A.lastName !== key) { A.lastName = key; return; } // lu deux fois de suite
-  let cards = [];
-  try { cards = await getJSON('/cards?name=' + encodeURIComponent(bn.name)); } catch { return; }
-  A.tried ||= new Set();
-  const sets = [...new Set(cards.filter(c => LOGIC.localNum(c) === num.num).map(c => setIdOf(c)))].map(setInfo)
-    .filter(st => st && !S.fpSets.includes(st.id) && !A.tried.has(st.id) && (num.promo || !num.tot || LOGIC.total(st) === num.tot || st.cardCount?.total === num.tot))
-    .sort((a, b) => (b.releaseDate || '').localeCompare(a.releaseDate || ''));
-  if (sets.length && sets.length <= 3) scanDownload(sets[0], `${bn.name} n° ${num.num}`);
+// ---------- quelle extension ? nom + numéro + année lus sur la carte ----------
+// Lecture identique deux fois de suite -> candidates : extensions de ce total (084) ou promo (MEP),
+// recoupées avec celles où ce Pokémon porte ce numéro, classées par l'année du © (ou l'année choisie).
+// Une seule nette gagnante : téléchargée toute seule ; sinon on propose les 2 à 4 plus probables.
+async function resolveSet(num, raw, hi) {
+  if (A.dl || A.only || !num || A.offering || A.resolving) return;
+  A.resolving = true;
+  try { await resolveSetNow(num, raw, hi); } finally { A.resolving = false; }
 }
-
-// ---------- extension détectée par le numéro lu : téléchargement automatique ----------
-// "005/084" lu deux fois de suite sans carte connue -> extensions de 84 cartes non téléchargées -> la plus récente
-async function autoDetect(num) {
-  const key = JSON.stringify(num);
-  if (A.lastNum !== key) { A.lastNum = key; return; }
-  if (A.dl || A.only) return;
+async function resolveSetNow(num, raw, hi) {
+  const dex = raw ? LOGIC.bestName(raw, await dexNames(), 0.75) : null;
+  const key = JSON.stringify(num) + '|' + (dex?.name || '');
+  if (A.lastKey !== key) { A.lastKey = key; return; }
+  if (hi && DIAG.ocr === 'prête' && !A.cardYear) A.cardYear = await readYear(hi, 630, 880);
   A.tried ||= new Set();
   let sets = num.promo
     ? allSets().filter(s => s.id.toLowerCase() === num.promo.toLowerCase() || norm(s.name).split(/\W+/).includes(num.promo.toLowerCase()))
-    : allSets().filter(s => s.cardCount?.official === num.tot);
-  sets = sets.filter(s => !S.fpSets.includes(s.id) && !A.tried.has(s.id)).sort((a, b) => (b.releaseDate || '').localeCompare(a.releaseDate || ''));
-  if (!sets.length || sets.length > 4) return; // trop d'extensions possibles : on ne devine pas
-  scanDownload(sets[0]);
+    : allSets().filter(s => s.cardCount?.official === num.tot || s.cardCount?.total === num.tot);
+  if (dex) { // ce Pokémon avec ce numéro : extensions où il existe vraiment
+    try {
+      const ids = new Set((await getJSON('/cards?name=' + encodeURIComponent(dex.name))).filter(c => LOGIC.localNum(c) === num.num).map(c => setIdOf(c)));
+      const inter = sets.filter(s => ids.has(s.id));
+      if (inter.length) sets = inter; else if (!sets.length) sets = allSets().filter(s => ids.has(s.id));
+    } catch { }
+  }
+  // une extension a pu arriver entre-temps (téléchargement terminé) : la carte est peut-être déjà connue
+  if (A.dl || scanCards().some(c => LOGIC.localNum(c) === num.num && (num.promo ? c.setId.toLowerCase() === num.promo.toLowerCase() : officialOf(c.setId) === num.tot))) return;
+  sets = sets.filter(s => !S.fpSets.includes(s.id) && !A.tried.has(s.id));
+  const ranked = LOGIC.rankSets(sets, { tot: num.tot, cardYear: A.cardYear, pickYear: A.year });
+  DIAG.guess = ranked.slice(0, 3).map(r => `${r.st.name} (${r.sc})`).join(' · ');
+  if (!ranked.length) return;
+  const why = [dex?.name, num.promo ? num.promo + ' ' + num.num : num.num + '/' + num.tot, A.cardYear && '©' + A.cardYear].filter(Boolean).join(', ');
+  if (ranked.length === 1 || ranked[0].sc - ranked[1].sc >= 1) scanDownload(ranked[0].st, why);
+  else if (ranked.length <= 4) offerSets(ranked.map(r => r.st), why);
 }
+async function readYear(hi, w, h) {
+  try {
+    const t = await ocr(strip(hi, w, Math.round(h * 0.962), Math.round(h * 0.036)), { tessedit_char_whitelist: '©0123456789 ,-', tessedit_pageseg_mode: '7' });
+    DIAG.yearText = t.trim().slice(0, 30);
+    return VISION.parseYear(t);
+  } catch { return null; }
+}
+// Plusieurs extensions possibles : l'utilisateur tranche d'un geste
+function offerSets(sets, why) {
+  A.offering = true;
+  const box = $('#matches');
+  box.innerHTML = `<p class="muted">Carte lue (${esc(why)}) : de quelle extension ?</p>` + sets.map(st => `
+    <button class="match" data-s="${esc(st.id)}">${setLogo(st)}<span class="grow"><b>${esc(st.name)}</b><br><span class="muted">${esc(st.serieName)}${st.releaseDate ? ' · ' + st.releaseDate.slice(0, 4) : ''} · ${LOGIC.total(st)} cartes</span></span></button>`).join('')
+    + '<button class="ghost" id="off-none">Aucune de celles-ci</button>';
+  box.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { A.offering = false; box.innerHTML = ''; scanDownload(setInfo(b.dataset.s), why); });
+  $('#off-none').onclick = () => { A.offering = false; sets.forEach(s => A.tried.add(s.id)); box.innerHTML = ''; };
+}
+
 async function scanDownload(st, why = '') {
   if (A.dl) return;
   A.tried ||= new Set();
@@ -340,7 +367,10 @@ async function scanDownload(st, why = '') {
 // Choix de l'extension en amont : le scan ne cherche que dedans (plus fiable, plus rapide)
 function fillScanSets() {
   const sel = $('#scan-set'); if (!sel) return;
-  const ready = allSets().filter(s => S.fpSets.includes(s.id)), rest = allSets().filter(s => !S.fpSets.includes(s.id))
+  const ys = $('#scan-year'), years = [...new Set(allSets().map(LOGIC.year))].filter(y => y !== '—' && y !== '0000').sort().reverse();
+  ys.innerHTML = `<option value="">Toutes années</option>${years.map(y => `<option ${A.year === y ? 'selected' : ''}>${y}</option>`).join('')}`;
+  const inYear = s => !A.year || (s.releaseDate || '').startsWith(A.year);
+  const ready = allSets().filter(s => S.fpSets.includes(s.id) && inYear(s)), rest = allSets().filter(s => !S.fpSets.includes(s.id) && inYear(s))
     .sort((a, b) => (b.releaseDate || '').localeCompare(a.releaseDate || ''));
   sel.innerHTML = `<option value="">Toutes mes extensions activées (détection auto)</option>
     ${ready.length ? `<optgroup label="Activées">${ready.map(s => `<option value="${esc(s.id)}" ${A.only === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</optgroup>` : ''}
@@ -381,6 +411,7 @@ function drawDebug(q, cr) {
     poly(zone(C.x0, C.y0, C.x1, C.y1), '#4cc9f0', 'empreinte image');
     poly(zone(0, 0.9, 1, 0.99), '#ff4fd8', 'numéro');
     poly(zone(0.05, 0.025, 0.78, 0.095), '#ffa94d', 'nom');
+    poly(zone(0, 0.962, 1, 0.998), '#b197fc', 'année ©');
     if (A.mode === 'graded') { const up = (u, t) => ({ x: onQuad(q, u, 0).x + (q[0].x - q[3].x) * t, y: onQuad(q, u, 0).y + (q[0].y - q[3].y) * t }); poly([up(0, .36), up(1, .36), up(1, .04), up(0, .04)], '#ffd166', 'étiquette'); }
   } else { // pas de bords : zone d'empreinte dans le rectangle jaune
     const g = cr.guide, gx = g.x - cr.x, gy = g.y - cr.y;
@@ -398,12 +429,13 @@ function renderDiag() {
     <span>Base : ${S.fpSets.length} extension(s), ${withFp}/${S.fpCards.length} cartes avec empreinte${A.only ? ` · limité à ${esc(setName(A.only))}` : ''}${A.dl ? ` · téléchargement auto de ${esc(setName(A.dl))}` : ''}</span>
     ${L ? `<span>Bords : ${L.edges ? '<span class="up">trouvés</span>' : '<span class="down">non trouvés</span>'} · nom lu : ${DIAG.name ? '<span class="up">' + esc(DIAG.name) + '</span>' : '–'} <span class="muted">(« ${esc(DIAG.nameText || '')} »)</span> · numéro lu : ${L.num ? (L.num.promo ? L.num.promo + ' ' + L.num.num : L.num.num + '/' + L.num.tot + (L.num.code ? ' ' + L.num.code : '')) : '–'} <span class="muted">(« ${esc(DIAG.ocrText || '')} »)</span></span>
     <span>${L.res.slice(0, 3).map((r, i) => `${i + 1}. ${esc(r.card.name)} ${esc(r.card.localId)} <b>${r.d.toFixed(3)}</b>`).join(' · ')}</span>
+    <span>Année © lue : ${A.cardYear || '–'} <span class="muted">(« ${esc(DIAG.yearText || '')} »)</span>${A.year ? ' · année choisie : ' + A.year : ''}${DIAG.guess ? ' · extensions probables : ' + esc(DIAG.guess) : ''}</span>
     <span>Décision : ${L.sure ? '<span class="up">sûr</span>' : 'pas sûr'} (sûr si &lt; ${FP.SURE_MAX} et écart &gt; ${FP.SURE_GAP}, ou numéro + image d'accord)</span>` : '<span>Aucune passe pour l\'instant</span>'}
     <span class="muted">${esc(DIAG.storage || '')}</span>`;
 }
 // Relancer : remet le scan à zéro (et la caméra si besoin)
 function retryScan() {
-  Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null });
+  Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null, cardYear: null, lastKey: null, offering: false });
   $('#matches').innerHTML = '';
   if (DIAG.ocr === 'indisponible') { DIAG.ocr = 'pas encore utilisée'; DIAG.ocrErr = ''; ocrP = null; }
   const v = $('#video');
@@ -606,6 +638,7 @@ function bindScanUI() {
   $('#quick-form').onsubmit = e => { e.preventDefault(); quickAdd($('#quick-q').value); };
   $('#retry-scan').onclick = retryScan;
   $('#scan-set').onchange = e => chooseScanSet(e.target.value);
+  $('#scan-year').onchange = e => { A.year = e.target.value; fillScanSets(); retryScan(); status(A.year ? `Recherche limitée à ${A.year}` : ''); };
   kv.get('debug').then(v => { A.debug = !!v; $('#debug').checked = A.debug; $('#diag').hidden = !A.debug; });
   $('#debug').onchange = async e => {
     A.debug = e.target.checked; kv.set('debug', A.debug); $('#diag').hidden = !A.debug;

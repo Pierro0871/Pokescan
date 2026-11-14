@@ -124,6 +124,12 @@
     return out;
   }
 
-  const api = { parseGrade, findCard, findCards, orderCorners, warp, median, parseNumber };
+  // Ligne de copyright en bas de carte -> année (la plus récente lue), ou null
+  function parseYear(text, max = new Date().getFullYear() + 1) {
+    const ys = (String(text).replace(/[Oo]/g, '0').match(/(?:19[89]\d|20[0-4]\d)/g) || []).map(Number).filter(y => y <= max);
+    return ys.length ? Math.max(...ys) : null;
+  }
+
+  const api = { parseYear, parseGrade, findCard, findCards, orderCorners, warp, median, parseNumber };
   if (typeof module !== 'undefined') module.exports = api; else root.VISION = api;
 })(this);

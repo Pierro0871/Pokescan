@@ -206,7 +206,8 @@ img.broken { visibility: hidden; }
 .autorow label { display: flex; align-items: center; gap: 6px; margin-right: 10px; }
 #diag { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 8px 10px; margin: 6px 0; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
 #diag[hidden] { display: none; }
-#scan-set { width: 100%; margin: 0 0 8px; font-size: 14px; }
+#scan-set, #scan-year { font-size: 14px; min-width: 0; } .scanpick { margin: 0 0 8px; flex-wrap: nowrap; } #scan-year { flex: none; width: 34%; }
+.match .logo { width: 64px; height: 30px; object-fit: contain; }
 /* ---- v10 : aspiration de l'écran caméra ---- */
 .flycam { position: fixed; z-index: 50; pointer-events: none; box-shadow: 0 0 40px rgba(62,207,142,.7); transform-origin: center; }
 #cam.vortex::after { content: ''; position: absolute; inset: 0; z-index: 3; pointer-events: none;

@@ -101,3 +101,14 @@ console.log('OK');
   assert.strictEqual(L.bestName('zzzz qqq', ['Pikachu']), null);
   console.log('OK noms');
 }
+{
+  const sets = [
+    { id: 'a', name: 'A', releaseDate: '2026-01-30', cardCount: { official: 84 } },
+    { id: 'b', name: 'B', releaseDate: '2019-05-03', cardCount: { official: 84 } },
+    { id: 'c', name: 'C', releaseDate: '2025-11-14', cardCount: { official: 86, total: 84 } },
+  ];
+  assert.strictEqual(L.rankSets(sets, { tot: 84, cardYear: 2019 })[0].st.id, 'b');
+  assert.strictEqual(L.rankSets(sets, { tot: 84, cardYear: 2025 })[0].st.id, 'a'); // © 2025, sortie janvier 2026
+  assert.deepStrictEqual(L.rankSets(sets, { tot: 84, pickYear: 2019 }).map(r => r.st.id), ['b']);
+  console.log('OK extension par année');
+}

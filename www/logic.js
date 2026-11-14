@@ -179,6 +179,18 @@
     return bs >= min ? { name: best, score: bs } : null;
   }
 
+  // ---------- quelle extension ? ----------
+  // Classe les extensions candidates avec ce qui est lu sur la carte : total (084), année du © et année choisie
+  function rankSets(sets, { tot, cardYear, pickYear } = {}) {
+    return sets.filter(st => !pickYear || year(st) === String(pickYear)).map(st => {
+      let sc = 0; const y = +year(st) || 0;
+      if (tot) sc += st.cardCount?.official === tot ? 3 : st.cardCount?.total === tot ? 1 : 0;
+      // le © imprimé vaut l'année de sortie, ou l'année d'avant pour les extensions sorties en début d'année
+      if (cardYear && y) sc += y === cardYear ? 2 : y === cardYear + 1 ? 1.5 : -Math.min(3, Math.abs(y - cardYear));
+      return { st, sc };
+    }).sort((a, b) => b.sc - a.sc || (b.st.releaseDate || '').localeCompare(a.st.releaseDate || ''));
+  }
+
   // ---------- succès ----------
   // s : { qty, unique, value, setsDone, species, dups, boosters, maxCard, scans }
   function achievements(s) {
@@ -256,6 +268,6 @@
     return { theyCanGive: give, iCanGive: get };
   }
 
-  const api = { similar, cleanName, bestName, packOdds, deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
+  const api = { rankSets, similar, cleanName, bestName, packOdds, deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
   if (typeof module !== 'undefined') module.exports = api; else root.LOGIC = api;
 })(this);
