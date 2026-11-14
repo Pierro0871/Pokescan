@@ -209,7 +209,7 @@ img.broken { visibility: hidden; }
 #scan-set, #scan-year { font-size: 14px; min-width: 0; } .scanpick { margin: 0 0 8px; flex-wrap: nowrap; } #scan-year { flex: none; width: 34%; }
 .match .logo { width: 64px; height: 30px; object-fit: contain; }
 /* ---- v10 : aspiration de l'écran caméra ---- */
-.flycam { position: fixed; z-index: 50; pointer-events: none; box-shadow: 0 0 40px rgba(62,207,142,.7); transform-origin: center; }
+.flycam { position: fixed; z-index: 50; pointer-events: none; border-radius: 16px; box-shadow: 0 0 40px rgba(62,207,142,.7); transform-origin: center; will-change: transform, opacity; }
 #cam.vortex::after { content: ''; position: absolute; inset: 0; z-index: 3; pointer-events: none;
   background: conic-gradient(from 0deg, transparent, rgba(62,207,142,.55), transparent 30%, rgba(255,203,5,.45), transparent 60%, rgba(62,207,142,.55), transparent);
   -webkit-mask: radial-gradient(circle, transparent 18%, #000 60%); mask: radial-gradient(circle, transparent 18%, #000 60%); animation: vortex .9s ease-in forwards; }
@@ -225,3 +225,12 @@ img.broken { visibility: hidden; }
 #newset[hidden] { display: none; } #newset span { flex: 1; } #newset button { background: #06140d; color: var(--ok); padding: 8px 12px; border-radius: 10px; } #newset .x { background: none; color: #06140d; padding: 4px 8px; }
 .rank { width: 26px; height: 26px; border-radius: 50%; background: var(--line); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: none; }
 .swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; } .swatch.on { border-color: var(--fg); box-shadow: 0 0 0 2px var(--bg) inset; }
+/* ---- v14 : confirmation sur la caméra ---- */
+#camprop { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 5; max-height: 72%; overflow-y: auto; border-radius: 14px; }
+#camprop:empty { display: none; }
+#camprop:not(:empty) { background: rgba(10,12,16,.86); backdrop-filter: blur(6px); padding: 8px; color: #eef0f4; animation: rise .22s ease-out; }
+#camprop .match { background: rgba(255,255,255,.08); color: #eef0f4; margin: 4px 0; }
+#camprop .match.sure { background: rgba(62,207,142,.14); }
+#camprop .muted { color: #b6bccb; } #camprop .ghost { border-color: rgba(255,255,255,.25); color: #eef0f4; }
+#camprop .row { margin: 6px 0 0; } #camprop p { margin: 2px 4px 6px; }
+#camprop .gradebox { background: rgba(255,255,255,.06); }

@@ -16,7 +16,7 @@ async function startCam() {
   status(S.fpSets.length ? '' : 'Active d\'abord le scan d\'une extension dans Collection');
   if (!v.srcObject) {
     try {
-      v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false });
+      v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
       await v.play();
       A.track = v.srcObject.getVideoTracks()[0];
       $('#torch').hidden = !A.track.getCapabilities?.().torch; A.torch = false; $('#torch').classList.remove('on');
@@ -248,7 +248,7 @@ async function pass() {
 
 async function loop() {
   if (S.view !== 'scan') return;
-  if (!A.paused && !A.analyzing && $('#sheet').hidden && A.mode !== 'page') {
+  if (!A.paused && !A.analyzing && !(A.flyUntil > Date.now()) && $('#sheet').hidden && A.mode !== 'page') {
     let r = null;
     const t0 = performance.now();
     try { r = await pass(); DIAG.err = ''; } catch (err) { console.error(err); DIAG.err = err.message; }
@@ -279,18 +279,25 @@ async function loop() {
 function resume(holdId) {
   A.grade = null; A.cardYear = null; A.analyzed = false;
   A.hold = holdId; A.paused = false; A.doubtSince = 0; A.lastTop = null;
-  $('#matches').innerHTML = ''; status();
+  clearProp(); status();
 }
+
+// Propositions affichées par-dessus l'image caméra
+function clearProp() { const p = $('#camprop'); if (p) p.innerHTML = ''; }
 
 function choose(c, fromEl) {
   const extra = A.mode === 'graded' && A.grade?.grade ? { grade: { co: A.grade.co || '?', g: A.grade.grade, cert: A.grade.cert || '' } } : {};
-  addFromScan(c, extra);
+  const hold = A.res[0].card.id === c.id ? c.id : A.res[0].card.id;
+  clearProp();
   feedback('add');
   flyCamera();
   A.grade = null;
-  const cam = $('#cam'); cam.classList.remove('flash'); void cam.offsetWidth; cam.classList.add('flash');
-  resume(A.res[0].card.id === c.id ? c.id : A.res[0].card.id);
-  toast(`Ajouté : <b>${esc(c.name)}</b> (${esc(c.setName)} ${esc(c.localId)}) — touche pour modifier`, () => openCard(c));
+  // enregistrement une fois l'animation lancée : il ne la bloque plus
+  requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
+    addFromScan(c, extra);
+    resume(hold);
+    toast(`Ajouté : <b>${esc(c.name)}</b> (${esc(c.setName)} ${esc(c.localId)}) — touche pour modifier`, () => openCard(c));
+  }, 0)));
 }
 
 // Ajout depuis le scan : variante choisie, session en cours, booster en cours
@@ -368,7 +375,7 @@ async function readYear(hi, w, h) {
 // Plusieurs extensions possibles : l'utilisateur tranche d'un geste
 function offerSets(sets, why, then = st => scanDownload(st, why)) {
   A.offering = true;
-  const box = $('#matches');
+  const box = $('#camprop');
   box.innerHTML = `<p class="muted">Carte lue (${esc(why)}) : de quelle extension ?</p>` + sets.map(st => `
     <button class="match" data-s="${esc(st.id)}">${setLogo(st)}<span class="grow"><b>${esc(st.name)}</b><br><span class="muted">${esc(st.serieName)}${st.releaseDate ? ' · ' + st.releaseDate.slice(0, 4) : ''} · ${LOGIC.total(st)} cartes</span></span></button>`).join('')
     + '<button class="ghost" id="off-none">Aucune de celles-ci</button>';
@@ -562,7 +569,7 @@ function renderDiag() {
 // Relancer : remet le scan à zéro (et la caméra si besoin)
 function retryScan() {
   Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null, cardYear: null, lastKey: null, offering: false, sheen: null, analyzed: false });
-  $('#matches').innerHTML = '';
+  clearProp();
   if (DIAG.ocr === 'indisponible') { DIAG.ocr = 'pas encore utilisée'; DIAG.ocrErr = ''; ocrP = null; }
   const v = $('#video');
   if (!v.srcObject || v.srcObject.getVideoTracks().every(t => t.readyState === 'ended')) { stopCam(); startCam(); }
@@ -607,23 +614,26 @@ function flyCamera() {
   const v = $('#video'), tab = $('#tabs [data-view=coll]');
   if (!v.videoWidth || !tab || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const cam = $('#cam').getBoundingClientRect(), to = tab.getBoundingClientRect();
-  const c = document.createElement('canvas'), k = Math.min(2, devicePixelRatio || 1);
+  // petite capture (480 px de large suffit pour une image qui rétrécit) : rapide à dessiner
+  const c = document.createElement('canvas'), k = Math.min(1, 480 / cam.width);
   c.width = Math.round(cam.width * k); c.height = Math.round(cam.height * k);
   const s = Math.max(c.width / v.videoWidth, c.height / v.videoHeight); // même cadrage que la vidéo (cover)
   c.getContext('2d').drawImage(v, (c.width - v.videoWidth * s) / 2, (c.height - v.videoHeight * s) / 2, v.videoWidth * s, v.videoHeight * s);
   c.className = 'flycam';
   Object.assign(c.style, { left: cam.left + 'px', top: cam.top + 'px', width: cam.width + 'px', height: cam.height + 'px' });
   document.body.appendChild(c);
+  A.flyUntil = Date.now() + 950; // le scan se met en pause pendant l'animation
   const dx = to.left + to.width / 2 - (cam.left + cam.width / 2), dy = to.top + to.height / 2 - (cam.top + cam.height / 2);
+  // seulement transform + opacity : animation gérée par le processeur graphique, fluide même si l'appli travaille
   c.animate([
-    { transform: 'translate(0,0) scale(1) rotate(0deg)', borderRadius: '16px', filter: 'brightness(1)', opacity: 1 },
-    { transform: 'translate(0,0) scale(.94) rotate(-3deg)', borderRadius: '24px', filter: 'brightness(1.35)', opacity: 1, offset: 0.18 },
-    { transform: `translate(${dx * 0.5}px,${dy * 0.42}px) scale(.38) rotate(200deg)`, borderRadius: '40%', filter: 'brightness(1.6) blur(1px)', opacity: .95, offset: 0.6 },
-    { transform: `translate(${dx}px,${dy}px) scale(.02) rotate(560deg)`, borderRadius: '50%', filter: 'brightness(2) blur(3px)', opacity: .2 },
-  ], { duration: 950, easing: 'cubic-bezier(.5,0,.85,.35)' }).onfinish = () => {
+    { transform: 'translate(0,0) scale(1) rotate(0deg)', opacity: 1 },
+    { transform: 'translate(0,0) scale(.92) rotate(-4deg)', opacity: 1, offset: 0.15 },
+    { transform: `translate(${dx * 0.5}px,${dy * 0.42}px) scale(.36) rotate(220deg)`, opacity: .95, offset: 0.6 },
+    { transform: `translate(${dx}px,${dy}px) scale(.02) rotate(560deg)`, opacity: .15 },
+  ], { duration: 900, easing: 'cubic-bezier(.5,0,.85,.35)' }).onfinish = () => {
     c.remove(); tab.classList.remove('bump'); void tab.offsetWidth; tab.classList.add('bump');
   };
-  const cm = $('#cam'); cm.classList.remove('vortex'); void cm.offsetWidth; cm.classList.add('vortex');
+  const cm = $('#cam'); cm.classList.remove('vortex', 'flash'); void cm.offsetWidth; cm.classList.add('vortex', 'flash');
 }
 
 // ---------- session de scan ----------
@@ -669,7 +679,7 @@ const boosterValue = b => b.cards.reduce((a, id) => a + (S.prices[id]?.trend || 
 function propose(sure) {
   A.paused = true;
   if (sure) feedback('found');
-  const res = A.res, box = $('#matches'), list = sure ? res.slice(0, 1) : res;
+  const res = A.res, box = $('#camprop'), list = sure ? res.slice(0, 1) : res;
   status(sure ? 'Carte reconnue' : 'Pas sûr : choisis la bonne carte');
   const g = A.mode === 'graded' ? A.grade || {} : null;
   const sv = A.sheen ? `<p class="small sheen">✨ ${A.sheen === 'reverse' ? 'Reverse' : 'Holo'} détecté${A.autoVar ? ' : sera ajoutée comme ça' : ' (coche « Variante auto » pour l\'utiliser)'}</p>` : '';
@@ -770,7 +780,7 @@ function bindScanUI() {
   $$('[data-var]').forEach(b => b.onclick = () => { A.variant = b.dataset.var; $$('[data-var]').forEach(x => x.classList.toggle('on', x === b)); });
   $$('[data-mode]').forEach(b => b.onclick = () => {
     A.mode = b.dataset.mode; $$('[data-mode]').forEach(x => x.classList.toggle('on', x === b));
-    $('#cam').classList.toggle('page', A.mode === 'page'); $('#matches').innerHTML = ''; drawQuads([], { x: 0, y: 0 });
+    $('#cam').classList.toggle('page', A.mode === 'page'); $('#matches').innerHTML = ''; clearProp(); drawQuads([], { x: 0, y: 0 });
     $('#btn-scan').textContent = A.mode === 'page' ? 'Analyser la page' : 'Choisir manuellement';
     $('#btn-scan').className = A.mode === 'page' ? 'primary big' : 'ghost big';
     $('#cam').classList.toggle('graded', A.mode === 'graded'); A.grade = null; A.hold = null;
@@ -780,7 +790,7 @@ function bindScanUI() {
   });
   $('#quick-form').onsubmit = e => { e.preventDefault(); quickAdd($('#quick-q').value); };
   $('#retry-scan').onclick = retryScan;
-  $('#analyze').onclick = () => { A.paused = false; $('#matches').innerHTML = ''; analyzeCard(true); };
+  $('#analyze').onclick = () => { A.paused = false; clearProp(); analyzeCard(true); };
   $('#scan-set').onchange = e => chooseScanSet(e.target.value);
   $('#scan-year').onchange = e => { A.year = e.target.value; fillScanSets(); retryScan(); status(A.year ? `Recherche limitée à ${A.year}` : ''); };
   kv.get('debug').then(v => { A.debug = !!v; $('#debug').checked = A.debug; $('#diag').hidden = !A.debug; });
