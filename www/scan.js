@@ -16,7 +16,7 @@ async function startCam() {
   status(S.fpSets.length ? '' : 'Active d\'abord le scan d\'une extension dans Collection');
   if (!v.srcObject) {
     try {
-      v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false });
       await v.play();
       A.track = v.srcObject.getVideoTracks()[0];
       $('#torch').hidden = !A.track.getCapabilities?.().torch; A.torch = false; $('#torch').classList.remove('on');
@@ -248,7 +248,7 @@ async function pass() {
 
 async function loop() {
   if (S.view !== 'scan') return;
-  if (!A.paused && $('#sheet').hidden && A.mode !== 'page') {
+  if (!A.paused && !A.analyzing && $('#sheet').hidden && A.mode !== 'page') {
     let r = null;
     const t0 = performance.now();
     try { r = await pass(); DIAG.err = ''; } catch (err) { console.error(err); DIAG.err = err.message; }
@@ -264,10 +264,12 @@ async function loop() {
         if ((A.auto && A.mode === 'one') || A.mode === 'batch') choose(r.list[0].card); else propose(true);
       }
       else if (r.plausible) {
-        status(r.sure ? 'Presque…' : 'Recherche…');
+        if (!A.analyzing) status(r.sure ? 'Presque…' : 'Recherche…');
         A.doubtSince ||= Date.now();
-        if (Date.now() - A.doubtSince > 3000) propose(false);
-      } else { A.doubtSince = 0; status(); }
+        // pas sûr après 1,2 s : on lit la carte (nom, numéro, année) pour trouver la bonne et son extension
+        if (!A.analyzed && !A.analyzing && Date.now() - A.doubtSince > 1200) analyzeCard();
+        else if (A.analyzed && !A.analyzing && !A.paused && Date.now() - A.doubtSince > 3000) propose(false);
+      } else { A.doubtSince = 0; if (!A.analyzing) status(); }
       A.lastTop = top;
     }
   }
@@ -275,7 +277,7 @@ async function loop() {
 }
 
 function resume(holdId) {
-  A.grade = null; A.cardYear = null;
+  A.grade = null; A.cardYear = null; A.analyzed = false;
   A.hold = holdId; A.paused = false; A.doubtSince = 0; A.lastTop = null;
   $('#matches').innerHTML = ''; status();
 }
@@ -364,24 +366,24 @@ async function readYear(hi, w, h) {
   } catch { return null; }
 }
 // Plusieurs extensions possibles : l'utilisateur tranche d'un geste
-function offerSets(sets, why) {
+function offerSets(sets, why, then = st => scanDownload(st, why)) {
   A.offering = true;
   const box = $('#matches');
   box.innerHTML = `<p class="muted">Carte lue (${esc(why)}) : de quelle extension ?</p>` + sets.map(st => `
     <button class="match" data-s="${esc(st.id)}">${setLogo(st)}<span class="grow"><b>${esc(st.name)}</b><br><span class="muted">${esc(st.serieName)}${st.releaseDate ? ' · ' + st.releaseDate.slice(0, 4) : ''} · ${LOGIC.total(st)} cartes</span></span></button>`).join('')
     + '<button class="ghost" id="off-none">Aucune de celles-ci</button>';
-  box.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { A.offering = false; box.innerHTML = ''; scanDownload(setInfo(b.dataset.s), why); });
+  box.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { A.offering = false; box.innerHTML = ''; then(setInfo(b.dataset.s)); });
   $('#off-none').onclick = () => { A.offering = false; sets.forEach(s => A.tried.add(s.id)); box.innerHTML = ''; };
 }
 
 async function scanDownload(st, why = '') {
-  if (A.dl) return;
+  if (A.dl || !st) return;
   A.tried ||= new Set();
   A.tried.add(st.id); A.dl = st.id;
   toast(`Extension détectée${why ? ' (' + esc(why) + ')' : ''} : <b>${esc(st.name)}</b> — téléchargement pour le scan…`);
   try {
     await downloadSet(await getSet(st.id), (d, t) => status(`Téléchargement de ${st.name} : ${d}/${t}`));
-    toast(`${esc(st.name)} est prête : rescanne la carte`); fillScanSets();
+    toast(`${esc(st.name)} est prête pour le scan`); fillScanSets();
   } catch (err) { toast('Téléchargement impossible : ' + esc(err.message)); }
   finally { A.dl = null; status(); }
 }
@@ -408,6 +410,105 @@ async function chooseScanSet(id) {
   }
   A.only = id; fillScanSets(); retryScan();
   status(id ? `Scan limité à ${setName(id)}` : '');
+}
+
+
+// ---------- analyse complète de la carte : lire nom, numéro, année, puis en déduire l'extension ----------
+// Photo pleine résolution si possible (le petit numéro est illisible dans le flux vidéo)
+async function stillFrame() {
+  try {
+    if (window.ImageCapture && A.track && A.track.readyState === 'live') {
+      const blob = await withTimeout(new ImageCapture(A.track).takePhoto(), 4000);
+      return await createImageBitmap(blob);
+    }
+  } catch { }
+  return null;
+}
+// Pixels -> petite image (pour l'empreinte) via un canvas
+function shrink(px, w, h, tw, th) {
+  const a = document.createElement('canvas'); a.width = w; a.height = h;
+  a.getContext('2d').putImageData(new ImageData(px, w, h), 0, 0);
+  return grab(a, 0, 0, w, h, tw, th);
+}
+async function analyzeCard(manual = false) {
+  if (A.analyzing) return;
+  A.analyzing = true;
+  status('🔍 Analyse de la carte (nom, numéro, année)…');
+  const R = { name: null, raw: '', num: null, year: null, src: '', edges: false };
+  DIAG.analysis = R;
+  try {
+    const v = $('#video'), cv = cvReady();
+    const still = await stillFrame();
+    const src = still || v, W = still ? still.width : v.videoWidth, H = still ? still.height : v.videoHeight;
+    R.src = still ? `photo ${W}×${H}` : `vidéo ${W}×${H}`;
+    if (!W) return;
+    // où est la carte ? bords trouvés sur l'image entière, sinon le rectangle jaune reporté sur la photo
+    const sw = 640, sh = Math.round(640 * H / W), small = grab(src, 0, 0, W, H, sw, sh);
+    let q = null;
+    if (cv) try { q = VISION.findCard(cv, small, sw, sh); } catch { }
+    let hi;
+    const HW = 1260, HH = 1760;
+    if (q) {
+      R.edges = true;
+      const bw = Math.min(W, 2600), bh = Math.round(bw * H / W), k = bw / sw;
+      const big = grab(src, 0, 0, W, H, bw, bh);
+      hi = VISION.warp(cv, big, bw, bh, q.map(p => ({ x: p.x * k, y: p.y * k })), HW, HH);
+    } else {
+      const g = captureRect().guide, vw = v.videoWidth, vh = v.videoHeight;
+      const s = Math.min(W / vw, H / vh), ox = (W - vw * s) / 2, oy = (H - vh * s) / 2; // la vidéo est un recadrage centré de la photo
+      hi = grab(src, ox + g.x * s, oy + g.y * s, g.w * s, g.h * s, HW, HH);
+    }
+    still?.close?.();
+    // lecture : le moteur doit être prêt (on l'attend ici, c'est une action ponctuelle)
+    if (!(await ocrWorker())) { toast('Lecture du texte indisponible sur ce téléphone'); return; }
+    R.raw = await ocr(strip(hi, HW, Math.round(HH * 0.02), Math.round(HH * 0.08), Math.round(HW * 0.04), Math.round(HW * 0.80)), { tessedit_char_whitelist: '', tessedit_pageseg_mode: '7' });
+    const bottom = await ocr(strip(hi, HW, Math.round(HH * 0.9), Math.round(HH * 0.095)), { tessedit_char_whitelist: '', tessedit_pageseg_mode: '11' });
+    R.bottom = bottom.replace(/\s+/g, ' ').trim().slice(0, 60);
+    R.num = VISION.parseNumber(bottom);
+    if (!R.num) R.num = VISION.parseNumber(await ocr(strip(hi, HW, Math.round(HH * 0.9), Math.round(HH * 0.095)), { tessedit_char_whitelist: '0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ', tessedit_pageseg_mode: '11' }));
+    R.year = VISION.parseYear(bottom);
+    const pool = scanCards();
+    R.name = LOGIC.bestName(R.raw, [...new Set(pool.map(c => c.name))])?.name || LOGIC.bestName(R.raw, await dexNames(), 0.72)?.name || null;
+    if (R.year) A.cardYear = R.year;
+    renderDiag();
+    await identify(R, shrink(hi, HW, HH, 126, 176), manual);
+  } catch (err) { console.error(err); DIAG.err = err.message; }
+  finally { A.analyzing = false; A.analyzed = true; if (!A.paused) status(); }
+}
+
+// Ce qui a été lu -> la carte : d'abord dans les extensions activées, sinon dans toute la base
+async function identify(R, lo, manual) {
+  const qs = FP.nearCrops().map(c => FP.fingerprint(FP.resample(lo, 126, 176, c)));
+  const pool = scanCards(), what = [R.name, R.num && (R.num.promo ? R.num.promo + ' ' + R.num.num : R.num.num + '/' + R.num.tot), R.year && '©' + R.year].filter(Boolean).join(' · ');
+  if (pool.length) {
+    const res = FP.rank(qs, pool).slice(0, 5);
+    let dec = FP.decide(qs, res, pool, R.num, officialOf);
+    if (!dec.matched && R.name) dec = decideByName(qs, res, pool, R.raw.includes(R.name) ? R.raw : R.name, R.num) || dec;
+    if (dec.matched) { A.res = dec.list; status(`Lu : ${what}`); return propose(true); }
+  }
+  // pas dans les extensions activées : ce Pokémon + ce numéro dans toute la base
+  let sets = [];
+  if (R.name) { // toutes les cartes de ce Pokémon ; avec le numéro lu, seulement celles qui le portent
+    try {
+      const found = (await getJSON('/cards?name=' + encodeURIComponent(R.name))).filter(c => norm(c.name) === norm(R.name) && (!R.num || LOGIC.localNum(c) === R.num.num));
+      sets = [...new Set(found.map(c => setIdOf(c)))].map(setInfo).filter(Boolean);
+    } catch { }
+  }
+  if (!sets.length && R.num) sets = R.num.promo
+    ? allSets().filter(s => s.id.toLowerCase() === R.num.promo.toLowerCase())
+    : allSets().filter(s => s.cardCount?.official === R.num.tot || s.cardCount?.total === R.num.tot);
+  if (R.num?.tot && sets.some(s => s.cardCount?.official === R.num.tot || s.cardCount?.total === R.num.tot))
+    sets = sets.filter(s => s.cardCount?.official === R.num.tot || s.cardCount?.total === R.num.tot);
+  const ranked = LOGIC.rankSets(sets.filter(s => !S.fpSets.includes(s.id)), { tot: R.num?.tot, cardYear: R.year, pickYear: A.year });
+  DIAG.guess = ranked.slice(0, 3).map(r => `${r.st.name} (${r.sc})`).join(' · ');
+  renderDiag();
+  const after = async st => { // extension téléchargée -> on ré-identifie avec elle
+    await scanDownload(st, what);
+    if (S.fpSets.includes(st.id)) { A.only = ''; return identify(R, lo, manual); }
+  };
+  if (ranked.length === 1 || (ranked.length > 1 && ranked[0].sc - ranked[1].sc >= 1)) return after(ranked[0].st);
+  if (ranked.length > 1 && ranked.length <= 6) return offerSets(ranked.map(r => r.st), what || 'carte', after);
+  if (manual || !A.res?.length) toast(what ? `Lu : ${esc(what)} — extension introuvable, choisis-la dans la liste en haut` : 'Je n\'arrive pas à lire cette carte : rapproche-toi, évite les reflets');
 }
 
 // ---------- diagnostic : zones vérifiées + état des modules ----------
@@ -452,6 +553,7 @@ function renderDiag() {
     <span>Base : ${S.fpSets.length} extension(s), ${withFp}/${S.fpCards.length} cartes avec empreinte${A.only ? ` · limité à ${esc(setName(A.only))}` : ''}${A.dl ? ` · téléchargement auto de ${esc(setName(A.dl))}` : ''}</span>
     ${L ? `<span>Bords : ${L.edges ? '<span class="up">trouvés</span>' : '<span class="down">non trouvés</span>'} · nom lu : ${DIAG.name ? '<span class="up">' + esc(DIAG.name) + '</span>' : '–'} <span class="muted">(« ${esc(DIAG.nameText || '')} »)</span> · numéro lu : ${L.num ? (L.num.promo ? L.num.promo + ' ' + L.num.num : L.num.num + '/' + L.num.tot + (L.num.code ? ' ' + L.num.code : '')) : '–'} <span class="muted">(« ${esc(DIAG.ocrText || '')} »)</span></span>
     <span>${L.res.slice(0, 3).map((r, i) => `${i + 1}. ${esc(r.card.name)} ${esc(r.card.localId)} <b>${r.d.toFixed(3)}</b>`).join(' · ')}</span>
+    ${DIAG.analysis ? `<span>🔍 Analyse (${esc(DIAG.analysis.src || '')}${DIAG.analysis.edges ? ', bords trouvés' : ', rectangle jaune'}) : nom <b>${esc(DIAG.analysis.name || '–')}</b> <span class="muted">(« ${esc((DIAG.analysis.raw || '').trim().slice(0, 30))} »)</span> · numéro <b>${DIAG.analysis.num ? (DIAG.analysis.num.promo ? DIAG.analysis.num.promo + ' ' + DIAG.analysis.num.num : DIAG.analysis.num.num + '/' + DIAG.analysis.num.tot) : '–'}</b> · année <b>${DIAG.analysis.year || '–'}</b> <span class="muted">(bas : « ${esc(DIAG.analysis.bottom || '')} »)</span></span>` : ''}
     <span>Reflets : ${A.sheen ? '<span class="up">' + (A.sheen === 'reverse' ? 'reverse' : 'holo') + '</span>' : 'rien de net'} (${A.frames.length}/3 images stables)</span>
     <span>Année © lue : ${A.cardYear || '–'} <span class="muted">(« ${esc(DIAG.yearText || '')} »)</span>${A.year ? ' · année choisie : ' + A.year : ''}${DIAG.guess ? ' · extensions probables : ' + esc(DIAG.guess) : ''}</span>
     <span>Décision : ${L.sure ? '<span class="up">sûr</span>' : 'pas sûr'} (sûr si &lt; ${FP.SURE_MAX} et écart &gt; ${FP.SURE_GAP}, ou numéro + image d'accord)</span>` : '<span>Aucune passe pour l\'instant</span>'}
@@ -459,7 +561,7 @@ function renderDiag() {
 }
 // Relancer : remet le scan à zéro (et la caméra si besoin)
 function retryScan() {
-  Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null, cardYear: null, lastKey: null, offering: false, sheen: null });
+  Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null, cardYear: null, lastKey: null, offering: false, sheen: null, analyzed: false });
   $('#matches').innerHTML = '';
   if (DIAG.ocr === 'indisponible') { DIAG.ocr = 'pas encore utilisée'; DIAG.ocrErr = ''; ocrP = null; }
   const v = $('#video');
@@ -678,6 +780,7 @@ function bindScanUI() {
   });
   $('#quick-form').onsubmit = e => { e.preventDefault(); quickAdd($('#quick-q').value); };
   $('#retry-scan').onclick = retryScan;
+  $('#analyze').onclick = () => { A.paused = false; $('#matches').innerHTML = ''; analyzeCard(true); };
   $('#scan-set').onchange = e => chooseScanSet(e.target.value);
   $('#scan-year').onchange = e => { A.year = e.target.value; fillScanSets(); retryScan(); status(A.year ? `Recherche limitée à ${A.year}` : ''); };
   kv.get('debug').then(v => { A.debug = !!v; $('#debug').checked = A.debug; $('#diag').hidden = !A.debug; });
