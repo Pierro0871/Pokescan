@@ -196,3 +196,8 @@ img.broken { visibility: hidden; }
 .fx-gold .foil, .fx-gold .spark { display: block; }
 .fx-gold .foil { background-image: linear-gradient(115deg, #7a5a12 0%, #f7e08a 25%, #b8892b 45%, #fff4c2 60%, #a87a1f 80%, #f2d36b 100%); background-size: 300% 300%; mix-blend-mode: soft-light; opacity: .85; }
 .center3d { justify-content: center; } .center3d .chip { color: #fff; border-color: rgba(255,255,255,.3); } .center3d .chip.on { background: #fff; color: #111; }
+/* ---- v9 : diagnostic ---- */
+.autorow label { display: flex; align-items: center; gap: 6px; margin-right: 10px; }
+#diag { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 8px 10px; margin: 6px 0; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+#diag[hidden] { display: none; }
+#scan-set { width: 100%; margin: 0 0 8px; font-size: 14px; }

@@ -89,6 +89,9 @@ Promise.resolve(require('@techstark/opencv-js')).then(cv => {
   assert.deepStrictEqual(V.parseNumber('Illus. 5 045/198 '), { num: 45, tot: 198 });
   assert.deepStrictEqual(V.parseNumber('4 / 102'), { num: 4, tot: 102 });
   assert.strictEqual(V.parseNumber('PROMO'), null);
+  assert.deepStrictEqual(V.parseNumber('PBL FR 005/084'), { num: 5, tot: 84, code: 'PBL' });
+  assert.deepStrictEqual(V.parseNumber('MEP 012'), { num: 12, promo: 'MEP' });
+  assert.deepStrictEqual(V.parseNumber('O45/l98'), { num: 45, tot: 198 });
 
   // fusion numéro + image : le numéro départage deux cartes que l'image confond
   const a = { id: 'x-45', localId: '045', setId: 'x', fp: refs[0].fp }, b = { id: 'y-12', localId: '012', setId: 'y', fp: refs[0].fp };

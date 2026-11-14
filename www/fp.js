@@ -123,15 +123,19 @@
   function decide(qs, res, cards, ocr, officialOf) {
     if (ocr) {
       const num = c => parseInt(String(c.localId).replace(/^\D+/, ''), 10);
-      const cand = cards.filter(c => c.fp && num(c) === ocr.num && officialOf(c.setId) === ocr.tot);
+      let cand = ocr.promo
+        ? cards.filter(c => c.fp && num(c) === ocr.num && String(c.setId).toLowerCase() === ocr.promo.toLowerCase())
+        : cards.filter(c => c.fp && num(c) === ocr.num && officialOf(c.setId) === ocr.tot);
+      // code d'extension lu (ex. PBL) : départage plusieurs extensions de même taille
+      if (ocr.code && cand.some(c => c.abbr === ocr.code)) cand = cand.filter(c => c.abbr === ocr.code);
       if (cand.length) {
         const best = cand.map(card => { let d = Infinity; for (const q of qs) d = Math.min(d, distance(q, card.fp)); return { card, d }; })
           .sort((a, b) => a.d - b.d)[0];
         const list = [best, ...res.filter(r => r.card.id !== best.card.id)].slice(0, 5);
-        return { list, sure: best.d < LOOSE_MAX, byNumber: best.d < LOOSE_MAX };
+        return { list, sure: best.d < LOOSE_MAX, byNumber: best.d < LOOSE_MAX, matched: true };
       }
     }
-    return { list: res, sure: isSure(res), byNumber: false };
+    return { list: res, sure: isSure(res), byNumber: false, matched: false };
   }
 
   // Scan auto : on ne propose une carte que si elle se détache nettement de la 2e
@@ -218,6 +222,6 @@
     return '﻿' + rows.map(r => r.map(esc).join(';')).join('\r\n');
   }
 
-  const api = { W, H, CROP, MARGIN, crops, search, rank, nearCrops, decide, resample, isSure, LOOSE_MAX, fingerprint, distance, topMatches, guideToVideo, CONDS, COND_LABEL, DEFAULT_COEF, unitPrice, entryKey, addEntry, stats, toCSV };
+  const api = { W, H, CROP, MARGIN, crops, search, rank, nearCrops, decide, resample, isSure, LOOSE_MAX, SURE_MAX, SURE_GAP, fingerprint, distance, topMatches, guideToVideo, CONDS, COND_LABEL, DEFAULT_COEF, unitPrice, entryKey, addEntry, stats, toCSV };
   if (typeof module !== 'undefined') module.exports = api; else root.FP = api;
 })(this);

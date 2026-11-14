@@ -26,7 +26,11 @@ const kv = (() => {
       t.oncomplete = () => res(q.result); t.onerror = () => rej(t.error);
     });
   };
-  return { get: k => tx('readonly', s => s.get(k)), set: (k, v) => tx('readwrite', s => s.put(v, k)) };
+  return {
+    get: k => tx('readonly', s => s.get(k)),
+    // échec d'écriture (stockage plein…) : on prévient une fois au lieu d'échouer en silence
+    set: (k, v) => tx('readwrite', s => s.put(v, k)).catch(err => { if (!kv.warned) { kv.warned = true; toast('⚠️ Enregistrement impossible (' + esc(err?.name || err) + '). Fais une sauvegarde depuis Stats.'); } }),
+  };
 })();
 
 // ---------- réseau ----------
@@ -76,8 +80,12 @@ function guessImg(c, q = 'low') {
 const imgBases = (c, sid) => { const st = setInfo(sid); return st ? ['fr', 'en', 'ja'].map(l => `https://assets.tcgdex.net/${l}/${st.serie}/${sid}/${c.localId}`) : []; };
 // Image introuvable : langue suivante (fr -> en -> ja), puis adresses de secours (data-alt), sinon on la masque
 function imgErr(im) {
-  const src = im.getAttribute('src') || '', m = src.match(/assets\.tcgdex\.net\/(fr|en|ja)\//), next = m && { fr: 'en', en: 'ja' }[m[1]];
-  if (next) { im.src = src.replace(`/${m[1]}/`, `/${next}/`); return; }
+  const src = im.getAttribute('src') || '';
+  if (!src || src.startsWith('data:')) return void im.classList.add('broken');
+  // coupure réseau passagère : on retente une fois la même adresse avant de changer de langue
+  if (!im.dataset.retry) { im.dataset.retry = '1'; setTimeout(() => { im.removeAttribute('src'); im.src = src; }, 1500); return; }
+  const m = src.match(/assets\.tcgdex\.net\/(fr|en|ja)\//), next = m && { fr: 'en', en: 'ja' }[m[1]];
+  if (next) { im.dataset.retry = ''; im.src = src.replace(`/${m[1]}/`, `/${next}/`); return; }
   const alt = (im.dataset.alt || '').split('|').filter(Boolean);
   if (alt.length) { im.dataset.alt = alt.slice(1).join('|'); im.src = alt[0]; return; }
   im.classList.add('broken');
@@ -242,7 +250,7 @@ async function downloadSet(set, onProg) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const tc = document.createElement('canvas'); tc.width = 126; tc.height = 176;
   await pool(cards, 6, async c => {
-    const card = { id: c.id, localId: c.localId, name: c.name, image: c.image, setId: set.id, setName: set.name, official: set.cardCount?.official };
+    const card = { id: c.id, localId: c.localId, name: c.name, image: c.image, setId: set.id, setName: set.name, official: set.cardCount?.official, abbr: set.abbreviation?.official };
     try {
       const d = await getJSON('/cards/' + encodeURIComponent(c.id));
       card.variants = d.variants; card.rarity = d.rarity;

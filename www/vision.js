@@ -97,10 +97,16 @@
     return out;
   }
 
-  // Texte lu en bas de carte -> { num, tot } (ex. "045/198"), ou null
+  // Texte lu en bas de carte -> { num, tot, code } : "PBL 005/084" -> { num: 5, tot: 84, code: 'PBL' } ;
+  // promo "MEP 012" -> { num: 12, promo: 'MEP' } ; null si rien de lisible
   function parseNumber(text) {
-    const m = String(text).replace(/[Oo]/g, '0').replace(/[Il|]/g, '1').match(/(\d{1,3})\s*\/\s*(\d{2,3})/);
-    return m ? { num: +m[1], tot: +m[2] } : null;
+    const t = String(text).toUpperCase();
+    const fixed = t.replace(/(?<=\d)[O]|[O](?=\d)/g, '0').replace(/(?<=\d)[IL|]|[IL|](?=\d)/g, '1');
+    const m = fixed.match(/(\d{1,3})\s*\/\s*(\d{2,3})/);
+    const codes = (t.match(/\b[A-Z]{3}\b/g) || []).filter(c => !/^(ILL|LUS|FRA|ENG|POK|EMO|THE)$/.test(c));
+    if (m) return codes.length ? { num: +m[1], tot: +m[2], code: codes[0] } : { num: +m[1], tot: +m[2] };
+    const p = t.match(/\b([A-Z]{2,4})\s?(\d{1,3})\b(?!\s*\/)/);
+    return p ? { num: +p[2], promo: p[1] } : null;
   }
 
   // Étiquette de boîtier gradé -> { co: 'PSA', grade: 10, cert: '12345678' } (champs absents si illisibles)

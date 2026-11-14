@@ -15,6 +15,7 @@
       <span class="grow"></span>
       <button class="chip on" data-var="normal">Normale</button><button class="chip" data-var="reverse">Reverse</button><button class="chip" data-var="holo">Holo</button>
     </div>
+    <select id="scan-set" aria-label="Extension à scanner"></select>
     <div id="cam">
       <video id="video" playsinline muted></video>
       <canvas id="overlay"></canvas>
@@ -22,7 +23,13 @@
       <button id="torch" class="torch" hidden aria-label="Lampe torche">🔦</button>
       <p id="cam-msg"></p>
     </div>
-    <label class="row small autorow"><input type="checkbox" id="auto"> Ajout auto (sans confirmer les cartes sûres)</label>
+    <div class="row small autorow">
+      <label><input type="checkbox" id="auto"> Ajout auto</label>
+      <label><input type="checkbox" id="debug"> Diagnostic</label>
+      <span class="grow"></span>
+      <button class="ghost small" id="retry-scan">↻ Relancer le scan</button>
+    </div>
+    <div id="diag" hidden></div>
     <div id="session"></div>
     <div id="matches"></div>
     <button id="btn-scan" class="ghost big">Choisir manuellement</button>

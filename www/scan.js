@@ -12,6 +12,7 @@ function cvReady() {
 
 async function startCam() {
   const v = $('#video');
+  fillScanSets();
   status(S.fpSets.length ? '' : 'Active d\'abord le scan d\'une extension dans Collection');
   if (!v.srcObject) {
     try {
@@ -83,13 +84,20 @@ function drawQuads(quads, org) {
 const drawCorners = (q, cr) => drawQuads(q ? [q] : [], cr);
 
 // Lecture du numéro (Tesseract, hors ligne, chargé à la première utilisation)
+// Un délai maximum partout : un module qui ne répond pas ne doit jamais bloquer le scan
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('délai dépassé')), ms))]);
+const DIAG = { ocr: 'pas encore utilisée', last: null };
+// Cartes candidates : l'extension choisie en amont, sinon toutes les extensions activées
+const scanCards = () => A.only ? S.fpCards.filter(c => c.setId === A.only) : S.fpCards;
 let ocrP = null;
 function ocrWorker() {
-  if (!window.Tesseract) return null;
+  if (!window.Tesseract || DIAG.ocr === 'indisponible') return null;
   const u = f => new URL('vendor/' + f, location.href).href;
-  return ocrP ||= Tesseract.createWorker('eng', 1, {
+  DIAG.ocr = DIAG.ocr === 'prête' ? 'prête' : 'chargement…';
+  return ocrP ||= withTimeout(Tesseract.createWorker('eng', 1, {
     workerPath: u('worker.min.js'), corePath: u('tesseract-core-simd-lstm.wasm.js'), langPath: u(''), gzip: false, workerBlobURL: false, cacheMethod: 'none'
-  }).catch(() => (ocrP = null));
+  }), 25000).then(w => { DIAG.ocr = 'prête'; return w; })
+    .catch(err => { DIAG.ocr = 'indisponible'; DIAG.ocrErr = err.message; return null; });
 }
 // Un seul moteur OCR partagé : chaque lecture fixe ses réglages et passe à son tour
 let ocrQ = Promise.resolve();
@@ -100,7 +108,7 @@ function ocr(canvas, params) {
     return (await w.recognize(canvas)).data.text;
   });
   ocrQ = run.catch(() => { });
-  return run;
+  return withTimeout(run, 4000).catch(() => ''); // shortcut: une lecture trop lente est abandonnée, l'image seule décide
 }
 // Morceau de l'image redressée (lignes y0..y0+bh) -> canvas agrandi ×2, gris contrasté
 function strip(px, w, y0, bh) {
@@ -113,7 +121,11 @@ function strip(px, w, y0, bh) {
 async function readNumber(hi, w, h) {
   if (!window.Tesseract) return null;
   // bande du bas de la carte (numéro à gauche sur les cartes récentes, à droite sur les anciennes)
-  try { return VISION.parseNumber(await ocr(strip(hi, w, Math.round(h * 0.9), Math.round(h * 0.09)), { tessedit_char_whitelist: '0123456789/', tessedit_pageseg_mode: '11' })); } catch { return null; }
+  try {
+    const t = await ocr(strip(hi, w, Math.round(h * 0.9), Math.round(h * 0.09)), { tessedit_char_whitelist: '0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ', tessedit_pageseg_mode: '11' });
+    DIAG.ocrText = t.trim().slice(0, 30);
+    return VISION.parseNumber(t);
+  } catch { return null; }
 }
 async function readLabel(px, w, h) {
   if (!window.Tesseract) return {};
@@ -124,6 +136,7 @@ const officialOf = id => S.catalog?.flatMap(s => s.sets).find(s => s.id === id)?
 // Boîtier gradé : la carte est la forme (parmi celles trouvées) qui ressemble le plus à une carte connue ;
 // l'étiquette est la bande au-dessus de la carte.
 async function passGraded(cv, v, cr) {
+  if (!scanCards().length) return null;
   const sw = 480, sh = Math.round(480 * cr.h / cr.w), small = grab(v, cr.x, cr.y, cr.w, cr.h, sw, sh);
   const found = VISION.findCards(cv, small, sw, sh, 0.05);
   if (!found.length) { drawQuads([], cr); return { list: [], sure: false, plausible: false }; }
@@ -134,23 +147,23 @@ async function passGraded(cv, v, cr) {
     const qb = f.q.map(p => ({ x: p.x * k * kb, y: p.y * k * kb }));
     const img = VISION.warp(cv, big, bw, bh, qb, 126, 176);
     const qs = FP.nearCrops().map(c => FP.fingerprint(FP.resample(img, 126, 176, c)));
-    const res = FP.rank(qs, S.fpCards).slice(0, 5);
+    const res = FP.rank(qs, scanCards()).slice(0, 5);
     if (!best || res[0].d < best.res[0].d) best = { res, qs, qb, f };
   }
   drawQuads([best.f.q.map(p => ({ x: p.x * k, y: p.y * k }))], cr);
   const [tl, tr, br, bl] = best.qb, up = { x: tl.x - bl.x, y: tl.y - bl.y };
   const at = (p, t) => ({ x: p.x + up.x * t, y: p.y + up.y * t });
   const label = VISION.warp(cv, big, bw, bh, [at(tl, 0.36), at(tr, 0.36), at(tr, 0.04), at(tl, 0.04)], 600, 220);
-  const g = await readLabel(label, 600, 220);
+  const g = DIAG.ocr === 'prête' ? await readLabel(label, 600, 220) : (ocrWorker(), {});
   A.grade = { ...(A.grade || {}), ...g }; // on garde ce qui a déjà été lu sur les passes précédentes
-  const dec = FP.decide(best.qs, best.res, S.fpCards, null, officialOf);
+  const dec = FP.decide(best.qs, best.res, scanCards(), null, officialOf);
   return { ...dec, plausible: best.res[0].d < FP.LOOSE_MAX };
 }
 
 // Une passe de scan. Renvoie { list, sure } ou null.
 async function pass() {
   const v = $('#video');
-  if (!v.videoWidth || !S.fpCards.length) return null;
+  if (!v.videoWidth) return null;
   const cr = captureRect();
   const cv = cvReady();
   if (cv && A.mode === 'graded') return passGraded(cv, v, cr);
@@ -170,17 +183,28 @@ async function pass() {
       A.frames = moved ? [lo] : [...A.frames.slice(-2), lo]; A.corners = qv;
       const img = VISION.median(A.frames), flip = rot180(img);
       const qs = FP.nearCrops().flatMap(c => [FP.fingerprint(FP.resample(img, 126, 176, c)), FP.fingerprint(FP.resample(flip, 126, 176, c))]);
-      const res = FP.rank(qs, S.fpCards).slice(0, 5);
-      let ocr = null;
-      if (res[0].d < FP.LOOSE_MAX) ocr = await readNumber(VISION.warp(cv, big, bw, bh, qb, 630, 880), 630, 880);
-      return { ...FP.decide(qs, res, S.fpCards, ocr, officialOf), plausible: true };
+      const cards = scanCards(), res = cards.length ? FP.rank(qs, cards).slice(0, 5) : [];
+      let num = null;
+      DIAG.ocrText = '';
+      // lecture du numéro seulement si le moteur est prêt : on ne l'attend jamais (il se charge en fond)
+      if (DIAG.ocr === 'prête') { if (!res.length || res[0].d < FP.LOOSE_MAX) num = await readNumber(VISION.warp(cv, big, bw, bh, qb, 630, 880), 630, 880); }
+      else ocrWorker();
+      if (!res.length) { if (num) autoDetect(num); DIAG.last = { edges: true, res, num, sure: false }; drawDebug(qv, cr); return null; }
+      const dec = FP.decide(qs, res, cards, num, officialOf);
+      if (num && !dec.matched) autoDetect(num);
+      DIAG.last = { edges: true, res, num, sure: dec.sure };
+      drawDebug(qv, cr);
+      return { ...dec, plausible: true };
     }
   }
   // sans bords détectés : recherche sur plusieurs cadrages dans le rectangle
   drawCorners(null, cr); A.frames = []; A.corners = null;
+  if (!scanCards().length) return null;
   const M = FP.MARGIN, g = cr.guide, AW = Math.round(FP.W * 2 * (1 + 2 * M)), AH = Math.round(FP.H * 2 * (1 + 2 * M));
   const px = grab(v, g.x - g.w * M, g.y - g.h * M, g.w * (1 + 2 * M), g.h * (1 + 2 * M), AW, AH);
-  const res = FP.search(c => FP.fingerprint(FP.resample(px, AW, AH, c)), S.fpCards, 5);
+  const res = FP.search(c => FP.fingerprint(FP.resample(px, AW, AH, c)), scanCards(), 5);
+  DIAG.last = { edges: false, res, num: null, sure: FP.isSure(res) };
+  drawDebug(null, cr);
   return { list: res, sure: FP.isSure(res), plausible: res[0].d < FP.LOOSE_MAX };
 }
 
@@ -188,7 +212,10 @@ async function loop() {
   if (S.view !== 'scan') return;
   if (!A.paused && $('#sheet').hidden && A.mode !== 'page') {
     let r = null;
-    try { r = await pass(); } catch (err) { console.error(err); }
+    const t0 = performance.now();
+    try { r = await pass(); DIAG.err = ''; } catch (err) { console.error(err); DIAG.err = err.message; }
+    DIAG.ms = Math.round(performance.now() - t0);
+    renderDiag();
     if (r && r.list.length && !A.paused && S.view === 'scan') {
       A.res = r.list;
       const top = r.list[0].card.id;
@@ -233,6 +260,102 @@ function addFromScan(c, extra = {}) {
   if (A.booster) { A.booster.cards.push(c.id); kv.set('boosters', S.boosters); }
   renderSession();
   return e;
+}
+
+// ---------- extension détectée par le numéro lu : téléchargement automatique ----------
+// "005/084" lu deux fois de suite sans carte connue -> extensions de 84 cartes non téléchargées -> la plus récente
+async function autoDetect(num) {
+  const key = JSON.stringify(num);
+  if (A.lastNum !== key) { A.lastNum = key; return; }
+  if (A.dl || A.only) return;
+  A.tried ||= new Set();
+  let sets = num.promo
+    ? allSets().filter(s => s.id.toLowerCase() === num.promo.toLowerCase() || norm(s.name).split(/\W+/).includes(num.promo.toLowerCase()))
+    : allSets().filter(s => s.cardCount?.official === num.tot);
+  sets = sets.filter(s => !S.fpSets.includes(s.id) && !A.tried.has(s.id)).sort((a, b) => (b.releaseDate || '').localeCompare(a.releaseDate || ''));
+  if (!sets.length || sets.length > 4) return; // trop d'extensions possibles : on ne devine pas
+  const st = sets[0];
+  A.tried.add(st.id); A.dl = st.id;
+  toast(`Extension détectée : <b>${esc(st.name)}</b> — téléchargement pour le scan…`);
+  try {
+    await downloadSet(await getSet(st.id), (d, t) => status(`Téléchargement de ${st.name} : ${d}/${t}`));
+    toast(`${esc(st.name)} est prête : rescanne la carte`); fillScanSets();
+  } catch (err) { toast('Téléchargement impossible : ' + esc(err.message)); }
+  finally { A.dl = null; status(); }
+}
+
+// Choix de l'extension en amont : le scan ne cherche que dedans (plus fiable, plus rapide)
+function fillScanSets() {
+  const sel = $('#scan-set'); if (!sel) return;
+  const ready = allSets().filter(s => S.fpSets.includes(s.id)), rest = allSets().filter(s => !S.fpSets.includes(s.id))
+    .sort((a, b) => (b.releaseDate || '').localeCompare(a.releaseDate || ''));
+  sel.innerHTML = `<option value="">Toutes mes extensions activées (détection auto)</option>
+    ${ready.length ? `<optgroup label="Activées">${ready.map(s => `<option value="${esc(s.id)}" ${A.only === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</optgroup>` : ''}
+    ${rest.length ? `<optgroup label="À télécharger">${rest.map(s => `<option value="${esc(s.id)}">${esc(s.name)}${s.releaseDate ? ' (' + s.releaseDate.slice(0, 4) + ')' : ''}</option>`).join('')}</optgroup>` : ''}`;
+}
+async function chooseScanSet(id) {
+  if (id && !S.fpSets.includes(id)) {
+    const st = setInfo(id);
+    status(`Téléchargement de ${st?.name || id}…`);
+    try { await downloadSet(await getSet(id), (d, t) => status(`Téléchargement de ${st?.name || id} : ${d}/${t}`)); }
+    catch (err) { toast('Téléchargement impossible : ' + esc(err.message)); id = ''; }
+  }
+  A.only = id; fillScanSets(); retryScan();
+  status(id ? `Scan limité à ${setName(id)}` : '');
+}
+
+// ---------- diagnostic : zones vérifiées + état des modules ----------
+// Point (u, v) de la carte (0..1) -> coordonnées vidéo, en interpolant entre les 4 coins
+const onQuad = (q, u, v) => ({ x: (1 - v) * ((1 - u) * q[0].x + u * q[1].x) + v * ((1 - u) * q[3].x + u * q[2].x), y: (1 - v) * ((1 - u) * q[0].y + u * q[1].y) + v * ((1 - u) * q[3].y + u * q[2].y) });
+function drawDebug(q, cr) {
+  if (!A.debug) return;
+  const ov = $('#overlay'), cam = $('#cam').getBoundingClientRect(), v = $('#video');
+  if (!v.videoWidth) return;
+  const ctx = ov.getContext('2d'), s = Math.max(cam.width / v.videoWidth, cam.height / v.videoHeight);
+  const ox = (cam.width - v.videoWidth * s) / 2, oy = (cam.height - v.videoHeight * s) / 2;
+  const P = p => [(cr.x + p.x) * s + ox, (cr.y + p.y) * s + oy];
+  const poly = (pts, color, label, dash = []) => {
+    ctx.save(); ctx.setLineDash(dash); ctx.shadowBlur = 0; ctx.lineWidth = 2; ctx.strokeStyle = color;
+    ctx.beginPath(); pts.forEach((p, i) => ctx[i ? 'lineTo' : 'moveTo'](...P(p))); ctx.closePath(); ctx.stroke();
+    if (label) { ctx.fillStyle = color; ctx.font = 'bold 11px system-ui'; const [x, y] = P(pts[0]); ctx.fillText(label, x + 3, y - 4); }
+    ctx.restore();
+  };
+  const rect = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  poly(rect(0, 0, cr.w, cr.h), 'rgba(255,255,255,.5)', 'zone analysée', [6, 6]);
+  const C = FP.CROP;
+  if (q) { // carte détectée : zones lues sur la carte redressée
+    const zone = (x0, y0, x1, y1) => [onQuad(q, x0, y0), onQuad(q, x1, y0), onQuad(q, x1, y1), onQuad(q, x0, y1)];
+    poly(zone(C.x0, C.y0, C.x1, C.y1), '#4cc9f0', 'empreinte image');
+    poly(zone(0, 0.9, 1, 0.99), '#ff4fd8', 'numéro');
+    if (A.mode === 'graded') { const up = (u, t) => ({ x: onQuad(q, u, 0).x + (q[0].x - q[3].x) * t, y: onQuad(q, u, 0).y + (q[0].y - q[3].y) * t }); poly([up(0, .36), up(1, .36), up(1, .04), up(0, .04)], '#ffd166', 'étiquette'); }
+  } else { // pas de bords : zone d'empreinte dans le rectangle jaune
+    const g = cr.guide, gx = g.x - cr.x, gy = g.y - cr.y;
+    poly(rect(gx + g.w * C.x0, gy + g.h * C.y0, gx + g.w * C.x1, gy + g.h * C.y1), '#4cc9f0', 'empreinte image (sans bords)');
+  }
+}
+function renderDiag() {
+  const el = $('#diag');
+  if (!el || !A.debug) return;
+  const v = $('#video'), L = DIAG.last, withFp = S.fpCards.filter(c => c.fp).length;
+  const cvState = CV ? 'prête' : window.cv ? 'chargement…' : 'non chargée';
+  el.innerHTML = `<b>Diagnostic du scan</b>
+    <span>Caméra : ${v.videoWidth ? v.videoWidth + '×' + v.videoHeight : 'pas d\'image'} · passe : ${DIAG.ms ?? '–'} ms${DIAG.err ? ` · <span class="down">erreur : ${esc(DIAG.err)}</span>` : ''}</span>
+    <span>Détection des bords : ${cvState} · lecture du numéro : ${DIAG.ocr}${DIAG.ocrErr ? ' (' + esc(DIAG.ocrErr) + ')' : ''}</span>
+    <span>Base : ${S.fpSets.length} extension(s), ${withFp}/${S.fpCards.length} cartes avec empreinte${A.only ? ` · limité à ${esc(setName(A.only))}` : ''}${A.dl ? ` · téléchargement auto de ${esc(setName(A.dl))}` : ''}</span>
+    ${L ? `<span>Bords : ${L.edges ? '<span class="up">trouvés</span>' : '<span class="down">non trouvés</span>'} · numéro lu : ${L.num ? (L.num.promo ? L.num.promo + ' ' + L.num.num : L.num.num + '/' + L.num.tot + (L.num.code ? ' ' + L.num.code : '')) : '–'} <span class="muted">(« ${esc(DIAG.ocrText || '')} »)</span></span>
+    <span>${L.res.slice(0, 3).map((r, i) => `${i + 1}. ${esc(r.card.name)} ${esc(r.card.localId)} <b>${r.d.toFixed(3)}</b>`).join(' · ')}</span>
+    <span>Décision : ${L.sure ? '<span class="up">sûr</span>' : 'pas sûr'} (sûr si &lt; ${FP.SURE_MAX} et écart &gt; ${FP.SURE_GAP}, ou numéro + image d'accord)</span>` : '<span>Aucune passe pour l\'instant</span>'}
+    <span class="muted">${esc(DIAG.storage || '')}</span>`;
+}
+// Relancer : remet le scan à zéro (et la caméra si besoin)
+function retryScan() {
+  Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null });
+  $('#matches').innerHTML = '';
+  if (DIAG.ocr === 'indisponible') { DIAG.ocr = 'pas encore utilisée'; DIAG.ocrErr = ''; ocrP = null; }
+  const v = $('#video');
+  if (!v.srcObject || v.srcObject.getVideoTracks().every(t => t.readyState === 'ended')) { stopCam(); startCam(); }
+  else { clearTimeout(A.timer); loop(); }
+  status('Scan relancé');
 }
 
 // Animation : la carte est aspirée vers l'onglet Collection
@@ -344,9 +467,9 @@ async function scanPage() {
     const qb = f.q.map(p => ({ x: p.x * k * kb, y: p.y * k * kb }));
     const img = VISION.warp(cv, big, bw, bh, qb, 126, 176), flip = rot180(img);
     const qs = FP.nearCrops().flatMap(c => [FP.fingerprint(FP.resample(img, 126, 176, c)), FP.fingerprint(FP.resample(flip, 126, 176, c))]);
-    const res = FP.rank(qs, S.fpCards).slice(0, 3);
+    const res = FP.rank(qs, scanCards()).slice(0, 3);
     let dec = { list: res, sure: FP.isSure(res) };
-    if (!dec.sure && res[0].d < FP.LOOSE_MAX) dec = FP.decide(qs, res, S.fpCards, await readNumber(VISION.warp(cv, big, bw, bh, qb, 630, 880), 630, 880), officialOf);
+    if (!dec.sure && res[0].d < FP.LOOSE_MAX && DIAG.ocr === 'prête') dec = FP.decide(qs, res, scanCards(), await readNumber(VISION.warp(cv, big, bw, bh, qb, 630, 880), 630, 880), officialOf);
     items.push({ list: dec.list.slice(0, 3), pick: 0, on: dec.list[0].d < FP.LOOSE_MAX, sure: dec.sure });
   }
   const render = () => {
@@ -403,6 +526,15 @@ function bindScanUI() {
     A.paused = false; status({ page: 'Cadre toute la page du classeur, puis Analyser', graded: 'Cadre le boîtier entier, étiquette en haut' }[A.mode] || '');
   });
   $('#quick-form').onsubmit = e => { e.preventDefault(); quickAdd($('#quick-q').value); };
+  $('#retry-scan').onclick = retryScan;
+  $('#scan-set').onchange = e => chooseScanSet(e.target.value);
+  kv.get('debug').then(v => { A.debug = !!v; $('#debug').checked = A.debug; $('#diag').hidden = !A.debug; });
+  $('#debug').onchange = async e => {
+    A.debug = e.target.checked; kv.set('debug', A.debug); $('#diag').hidden = !A.debug;
+    const est = await navigator.storage?.estimate?.(), pers = await navigator.storage?.persisted?.();
+    if (est) DIAG.storage = `Stockage : ${Math.round(est.usage / 1e6)} Mo utilisés sur ${Math.round(est.quota / 1e6)} Mo · persistant : ${pers ? 'oui' : 'non'}`;
+    renderDiag();
+  };
   kv.get('autoadd').then(v => { A.auto = !!v; $('#auto').checked = A.auto; });
   $('#auto').onchange = e => { A.auto = e.target.checked; kv.set('autoadd', A.auto); toast(A.auto ? 'Ajout auto : les cartes reconnues avec certitude s\'ajoutent seules' : 'Ajout auto désactivé'); };
 }
