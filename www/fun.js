@@ -315,3 +315,75 @@ function open3D(c) {
   addEventListener('deviceorientation', ori);
   draw(); frame();
 }
+
+// ---------- revue de la collection : carte par carte, en 3D plein écran, on choisit l'état ----------
+function openReview(onlyTodo = true) {
+  const v = $('#viewer');
+  const order = () => S.coll.map((e, i) => i)
+    .filter(i => S.coll[i].setId !== undefined && (!onlyTodo || !S.coll[i].reviewed))
+    .sort((a, b) => String(S.coll[a].setName).localeCompare(S.coll[b].setName) || LOGIC.localNum(S.coll[a]) - LOGIC.localNum(S.coll[b]));
+  let list = order(), pos = 0, rx = -6, ry = -14, drag = null, gx = 0, gy = 0, raf = 0, vy = 0;
+  const done = () => S.coll.filter(e => e.reviewed).length;
+  v.hidden = false; v.classList.add('review');
+  const draw = () => {
+    if (!list.length) {
+      v.innerHTML = `<button class="vclose" aria-label="Fermer">✕</button><div class="vcap"><b>${onlyTodo ? 'Toutes tes cartes sont passées en revue ✓' : 'Collection vide'}</b>
+        <span>${done()} / ${S.coll.length} carte(s) revue(s)</span><div class="row center3d"><button class="chip on" id="rv-all">Tout revoir quand même</button></div></div>`;
+      v.querySelector('.vclose').onclick = close;
+      $('#rv-all') && ($('#rv-all').onclick = () => { onlyTodo = false; list = order(); pos = 0; draw(); });
+      return;
+    }
+    const e = S.coll[list[pos]], c = { id: e.cardId, localId: e.localId, name: e.name, image: e.image, photo: e.photo, setId: e.setId, setName: e.setName };
+    const fx = fxFor(LOGIC.rarityTier(S.meta[e.cardId]?.r ?? ''), e.variant), u = FP.unitPrice(S.prices[e.cardId], e.variant, e.cond, S.coef);
+    v.innerHTML = `<div class="rvtop"><button class="vclose" aria-label="Fermer">✕</button>
+        <span class="rvprog"><b>${pos + 1}</b> / ${list.length}${onlyTodo ? ' à revoir' : ''} · ${done()} revue(s)</span>
+        <button class="chip ${onlyTodo ? 'on' : ''}" id="rv-todo">${onlyTodo ? 'À revoir' : 'Toutes'}</button></div>
+      <div class="s3d"><div class="c3d">
+        <div class="face front fx-${fx}">${imgOf(c, 'high') ? `<img src="${esc(imgOf(c, 'high'))}" alt="${esc(c.name)}" draggable="false">` : `<span class="noimg">${esc(c.name)}</span>`}<i class="foil"></i><i class="spark"></i><i class="glare"></i></div>
+        <div class="face edge e1"></div><div class="face edge e2"></div>
+        <div class="face back ${S.cardBack ? 'custom' : ''}" ${S.cardBack ? `style="background-image:url('${S.cardBack}')"` : ''}>${S.cardBack ? '' : '<span class="br tl"></span><span class="br tr"></span><span class="br bl"></span><span class="br br2"></span><b>PokeScan</b>'}</div>
+      </div></div>
+      <div class="vcap"><b>${esc(e.name)}</b><span>${esc(e.setName)} · n° ${esc(e.localId)} · ${VARIANTS[e.variant]}${e.qty > 1 ? ' · ×' + e.qty : ''} · ${FLAG[langOf(e)]}${u.trend != null ? ' · ' + eur(u.trend) : ''}${e.reviewed ? ' · revue ✓' : ''}</span>
+        <div class="row center3d">${Object.entries(VARIANTS).map(([k, l]) => `<button class="chip ${e.variant === k ? 'on' : ''}" data-rv="${k}">${l}</button>`).join('')}</div></div>
+      <div class="conds">${FP.CONDS.map(k => `<button class="cond ${e.cond === k ? 'on' : ''}" data-cd="${k}"><b>${k}</b><small>${FP.COND_LABEL[k]}</small></button>`).join('')}</div>
+      <div class="row rvnav"><button class="ghost" id="rv-prev" ${pos ? '' : 'disabled'}>← Précédente</button><button class="ghost" id="rv-skip">Passer →</button></div>`;
+    v.querySelector('.vclose').onclick = close;
+    $('#rv-todo').onclick = () => { onlyTodo = !onlyTodo; list = order(); pos = 0; draw(); };
+    $('#rv-prev').onclick = () => { pos = Math.max(0, pos - 1); draw(); };
+    $('#rv-skip').onclick = () => next();
+    v.querySelectorAll('[data-rv]').forEach(b => b.onclick = () => { e.variant = b.dataset.rv; save(); draw(); });
+    v.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => {
+      e.cond = b.dataset.cd; e.reviewed = Date.now(); save(); feedback('found');
+      b.classList.add('on', 'picked'); vy = 24; // un tour de la carte pour valider
+      setTimeout(next, 280);
+    });
+  };
+  // en mode « à revoir », la carte notée sort de la liste : on reste à la même place
+  const next = () => { if (onlyTodo) { list = order(); pos = Math.min(pos, Math.max(0, list.length - 1)); } else pos = Math.min(list.length - 1, pos + 1); draw(); };
+  const frame = () => {
+    if (!drag) {
+      vy *= 0.92; ry += vy; const t = performance.now() / 1000;
+      if (Math.abs(vy) < 0.3) { ry = ((ry % 360) + 540) % 360 - 180; ry += (Math.sin(t * 0.7) * 12 - 8 - ry) * 0.06; rx += (Math.sin(t * 0.9) * 5 - 5 - rx) * 0.03; } // revient face visible
+    }
+    const RX = rx + gy, RY = ry + gx;
+    v.style.setProperty('--rx', RX.toFixed(2) + 'deg'); v.style.setProperty('--ry', RY.toFixed(2) + 'deg');
+    const a = (RY % 360 + 360) % 360;
+    v.style.setProperty('--px', (50 + Math.sin(a * Math.PI / 180) * 60).toFixed(1) + '%'); v.style.setProperty('--py', (50 - Math.sin(RX * Math.PI / 180) * 80).toFixed(1) + '%');
+    raf = requestAnimationFrame(frame);
+  };
+  const down = ev => { if (!ev.target.closest('.s3d')) return; drag = { x: ev.clientX, y: ev.clientY }; };
+  const move = ev => { if (!drag) return; ry += (ev.clientX - drag.x) * 0.5; rx -= (ev.clientY - drag.y) * 0.4; vy = (ev.clientX - drag.x) * 0.25; drag = { x: ev.clientX, y: ev.clientY }; };
+  const up = () => { drag = null; };
+  const ori = ev => { if (ev.gamma == null) return; gx = Math.max(-25, Math.min(25, ev.gamma)) * 0.8; gy = -Math.max(-25, Math.min(25, ev.beta - 45)) * 0.6; };
+  function close() {
+    cancelAnimationFrame(raf); v.hidden = true; v.innerHTML = ''; v.classList.remove('review');
+    v.removeEventListener('pointerdown', down); v.removeEventListener('pointermove', move); v.removeEventListener('pointerup', up);
+    removeEventListener('deviceorientation', ori);
+    const merged = S.coll.reduce((acc, x) => FP.addEntry(acc, x), []); // lignes devenues identiques -> fusion
+    if (merged.length !== S.coll.length) { S.coll = merged; save(false); }
+    S.redrawColl?.();
+  }
+  v.addEventListener('pointerdown', down); v.addEventListener('pointermove', move); v.addEventListener('pointerup', up);
+  addEventListener('deviceorientation', ori);
+  draw(); frame();
+}

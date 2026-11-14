@@ -37,6 +37,7 @@ function renderColl() {
     </div>
     <div class="row">${[['', 'Toutes'], ['started', 'Commencées'], ['done', 'Complètes'], ['none', 'Pas commencées'], ['scan', 'Scan activé']].map(([k, l]) => `<button class="chip ${f.state === k ? 'on' : ''}" data-st="${k}">${l}</button>`).join('')}</div>
     ${allTags().length ? `<div class="row tagrow"><span class="muted small">🏷️</span>${allTags().map(t => `<button class="chip tag" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
+    <button class="setrow" id="review"><span class="sym">🧐</span><span class="grow"><b>Passer en revue ma collection</b><br><span class="muted small">Carte par carte en 3D, plein écran : choisis l'état de chacune</span></span></button>
     <button class="setrow" id="wanted"><span class="sym">🔎</span><span class="grow"><b>Cartes à trouver</b><br><span class="muted small">Ce qui te manque dans tes extensions commencées, par prix</span></span></button>
     <button class="setrow" id="perso"><span class="sym">✍️</span><span class="grow"><b>Mes cartes perso</b><br><span class="muted small">Cartes absentes de la base, ajoutées à la main</span></span><span class="count">${persoN}</span></button>
     <div id="cf-list"></div>
@@ -70,6 +71,7 @@ function renderColl() {
   $$('[data-st]').forEach(b => b.onclick = () => { f.state = b.dataset.st; $$('[data-st]').forEach(x => x.classList.toggle('on', x === b)); list(); });
   $('#perso').onclick = openPerso;
   $('#wanted').onclick = () => openWanted();
+  $('#review').onclick = () => openReview();
   el.querySelector('.langsel').onchange = e => switchLang(e.target.value);
   $$('[data-tag]').forEach(b => b.onclick = () => openTag(b.dataset.tag));
   $('#refresh-cat').onclick = () => loadCatalog().then(() => toast('Liste à jour')).catch(err => toast('Erreur : ' + esc(err.message)));
@@ -98,6 +100,10 @@ async function downloadAll() {
 }
 
 // ---------- extension : classeur ----------
+// Catégorie d'une carte (Pokémon / Dresseur / Énergie), connue une fois les infos de la carte chargées
+const catOf = c => { const m = S.meta[c.id]; return m?.c ? LOGIC.kind({ category: m.c }) : null; };
+const CATS = [['all', 'Tout'], ['pokemon', 'Pokémon'], ['trainer', 'Dresseurs'], ['energy', 'Énergies']];
+
 async function openSet(id, filter = 'all', mode = S.setMode || 'grid', page = 0) {
   const el = $('#view-coll');
   S.redrawColl = () => openSet(id, filter, mode, page);
@@ -109,7 +115,9 @@ async function openSet(id, filter = 'all', mode = S.setMode || 'grid', page = 0)
   const owned = ownedIds(), fpImg = Object.fromEntries(S.fpCards.filter(c => c.setId === id).map(c => [c.id, c.image]));
   const cards = (set.cards || []).map(c => c.image || !fpImg[c.id] ? c : { ...c, image: fpImg[c.id] });
   const n = cards.filter(c => owned.has(c.id)).length;
-  const shown = cards.filter(c => filter === 'all' || (filter === 'miss') !== owned.has(c.id));
+  const cat = S.setCat || 'all', unknownCat = cards.filter(c => !catOf(c)).length;
+  const shown = cards.filter(c => (filter === 'all' || (filter === 'miss') !== owned.has(c.id)) && (cat === 'all' || catOf(c) === cat));
+  const booster = await kv.get(LK('booster:' + id));
   const ready = S.fpSets.includes(id), v = LOGIC.setValue(cards, owned, S.prices);
   const pages = Math.max(1, Math.ceil(shown.length / 9)); page = Math.min(page, pages - 1);
   el.innerHTML = `
@@ -124,6 +132,9 @@ async function openSet(id, filter = 'all', mode = S.setMode || 'grid', page = 0)
       <span class="grow"></span>
       <button class="chip ${mode === 'grid' ? 'on' : ''}" data-m="grid">Grille</button><button class="chip ${mode === 'pages' ? 'on' : ''}" data-m="pages">Pages</button>
     </div>
+    <div class="row">${CATS.map(([k, l]) => `<button class="chip small ${cat === k ? 'on' : ''}" data-cat="${k}">${l}</button>`).join('')}</div>
+    ${cat !== 'all' && unknownCat ? `<p class="muted small">${unknownCat} carte(s) sans catégorie connue : active le scan de l'extension pour les classer.</p>` : ''}
+    <div class="row boosterrow">${booster ? `<img src="${booster}" class="boosterimg" alt="Booster">` : ''}<label class="ghost filebtn small">📦 ${booster ? 'Changer la' : 'Ajouter une'} photo du booster<input type="file" accept="image/*" id="booster-file" hidden></label>${booster ? '<button class="ghost small" id="booster-del">✕</button>' : ''}</div>
     <button class="${ready ? 'ghost' : 'primary'}" id="dl">${ready ? 'Scan prêt ✓ — mettre à jour prix et empreintes' : 'Activer le scan pour cette extension'}</button>
     <p id="dl-prog" class="muted"></p>
     ${mode === 'pages' ? `<div class="binder" id="binder">${grid(shown.slice(page * 9, page * 9 + 9), owned)}</div>
@@ -132,6 +143,16 @@ async function openSet(id, filter = 'all', mode = S.setMode || 'grid', page = 0)
   $('#back').onclick = backToList;
   $$('[data-f]').forEach(b => b.onclick = () => openSet(id, b.dataset.f, mode, 0));
   $$('[data-m]').forEach(b => b.onclick = () => { S.setMode = b.dataset.m; openSet(id, filter, b.dataset.m, 0); });
+  $$('[data-cat]').forEach(b => b.onclick = () => { S.setCat = b.dataset.cat; openSet(id, filter, mode, 0); });
+  // photo du booster de l'extension (prise par toi), affichée ici et dans les boosters fictifs
+  $('#booster-file').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    const img = await getImage(URL.createObjectURL(f)), c = document.createElement('canvas'), k = Math.min(1, 640 / img.height);
+    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    await kv.set(LK('booster:' + id), c.toDataURL('image/jpeg', 0.85)); openSet(id, filter, mode, page);
+  };
+  $('#booster-del') && ($('#booster-del').onclick = async () => { await kv.set(LK('booster:' + id), null); openSet(id, filter, mode, page); });
   if (mode === 'pages') {
     const go = d => openSet(id, filter, mode, page + d);
     $('#pp').onclick = () => go(-1); $('#pn').onclick = () => go(1);
@@ -368,7 +389,11 @@ function renderSim() {
     const cards = S.fpCards.filter(c => c.setId === id).map(c => ({ ...c, rarity: c.rarity ?? S.meta[c.id]?.r }));
     await loadThumbs(id);
     const st = setInfo(id), promo = /promo|mcdo|mcdonald/i.test(norm(st?.name) + ' ' + norm(st?.serieName));
-    openPack(LOGIC.drawBooster(cards, Math.random, promo), st?.name || id);
+    const pk = LOGIC.drawBooster(cards, Math.random, promo), photo = await kv.get(LK('booster:' + id));
+    if (!photo) return openPack(pk, st?.name || id);
+    // ta photo du booster : on la déchire pour l'ouvrir
+    $('#pack').innerHTML = `<button class="wrapper" id="wrap"><img src="${photo}" alt="Booster"><span>Touche pour ouvrir</span></button>`;
+    $('#wrap').onclick = () => { $('#wrap').classList.add('tear'); feedback('found'); setTimeout(() => openPack(pk, st?.name || id), 650); };
   };
 }
 // Animation : cartes face cachée, on les retourne une par une ; la plus rare en dernier
@@ -414,8 +439,8 @@ function renderStats() {
   const worth = withPaid.reduce((a, e) => a + (FP.unitPrice(S.prices[e.cardId], e.variant, e.cond, S.coef).trend || 0) * e.qty, 0);
   const moves = [...new Set(coll.map(e => e.cardId))].map(id => ({ id, ch: LOGIC.priceChange(S.prices[id]), p: S.prices[id]?.trend || 0 }))
     .filter(x => x.ch != null && x.p >= 0.5).sort((a, b) => b.ch - a.ch);
-  const rar = {}, typ = {};
-  for (const e of coll) { const m = S.meta[e.cardId]; if (!m) continue; rar[m.r || 'Inconnue'] = (rar[m.r || 'Inconnue'] || 0) + e.qty; for (const t of m.t || []) typ[t] = (typ[t] || 0) + e.qty; }
+  const rar = {}, typ = {}, cats = {};
+  for (const e of coll) { const m = S.meta[e.cardId]; if (!m) continue; if (m.c) { const k = { pokemon: 'Pokémon', trainer: 'Dresseurs', energy: 'Énergies' }[LOGIC.kind({ category: m.c })]; cats[k] = (cats[k] || 0) + e.qty; } rar[m.r || 'Inconnue'] = (rar[m.r || 'Inconnue'] || 0) + e.qty; for (const t of m.t || []) typ[t] = (typ[t] || 0) + e.qty; }
   const bars = o => { const a = Object.entries(o).sort((x, y) => y[1] - x[1]), max = a[0]?.[1] || 1; return a.map(([k, n]) => `<div class="hbar"><span>${esc(k)}</span><i style="width:${n / max * 100}%"></i><b>${n}</b></div>`).join(''); };
   const ach = LOGIC.achievements(achState(st));
   const line = (e, right) => `<button class="line" data-id="${esc(e.cardId)}"><span class="grow">${esc(e.name)} <span class="muted">${esc(e.setName)} ${esc(e.localId)}</span></span>${right}</button>`;
@@ -441,6 +466,7 @@ function renderStats() {
     ${rankingHTML(coll)}
     <h2>Doublons (${st.dups.reduce((a, d) => a + d.extra, 0)} à échanger)</h2>
     ${st.dups.map(d => line(byId[d.id], `<b>+${d.extra}</b>`)).join('') || '<p class="muted">Pas de doublon.</p>'}
+    <h2>Par catégorie</h2>${bars(cats) || '<p class="muted small">Infos chargées en ligne.</p>'}
     <h2>Par rareté</h2>${bars(rar) || '<p class="muted small">Infos chargées en ligne.</p>'}
     <h2>Par type</h2>${bars(typ) || '<p class="muted small">Infos chargées en ligne.</p>'}
     <h2>Succès (${ach.filter(a => a.done).length}/${ach.length})</h2>

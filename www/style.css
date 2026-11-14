@@ -241,3 +241,23 @@ img.broken { visibility: hidden; }
 #zoom[hidden] { display: none; }
 .focusring { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; border: 2px solid var(--acc); border-radius: 50%; z-index: 4; pointer-events: none; animation: focusr .9s ease-out forwards; }
 @keyframes focusr { from { transform: scale(1.6); opacity: 0; } 30% { transform: scale(1); opacity: 1; } to { opacity: 0; } }
+/* ---- v16 : revue, booster, catégories ---- */
+#viewer.review { justify-content: space-between; padding: max(10px, env(safe-area-inset-top)) 12px max(14px, env(safe-area-inset-bottom)); }
+#viewer.review .s3d { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
+#viewer.review .c3d { width: min(62vw, 46vh * 63 / 88); }
+#viewer.review .vcap { margin-top: 10px; }
+.rvtop { display: flex; align-items: center; gap: 10px; width: 100%; } .rvtop .vclose { position: static; } .rvprog { flex: 1; text-align: center; color: #b9bfcc; }
+.rvtop .chip { color: #fff; border-color: rgba(255,255,255,.3); } .rvtop .chip.on { background: #fff; color: #111; }
+.conds { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; width: 100%; margin-top: 10px; }
+.cond { display: flex; flex-direction: column; align-items: center; padding: 10px 2px; border-radius: 12px; background: rgba(255,255,255,.08); color: #fff; }
+.cond b { font-size: 16px; } .cond small { font-size: 8px; color: #b9bfcc; text-align: center; line-height: 1.1; }
+.cond.on { background: var(--acc); color: #111; } .cond.on small { color: #333; }
+.cond.picked { animation: pop .3s cubic-bezier(.2,.9,.3,1.6); }
+.rvnav { width: 100%; justify-content: space-between; } .rvnav .ghost { color: #fff; border-color: rgba(255,255,255,.25); }
+.boosterrow { align-items: center; } .boosterimg { height: 70px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+.wrapper { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 14px auto; padding: 0; }
+.wrapper img { max-height: 46vh; border-radius: 10px; box-shadow: 0 16px 40px rgba(0,0,0,.5); animation: float 2.4s ease-in-out infinite; }
+.wrapper span { color: var(--muted); font-size: 13px; }
+.wrapper.tear img { animation: tear .65s ease-in forwards; }
+@keyframes float { 50% { transform: translateY(-8px) rotate(-1.5deg); } }
+@keyframes tear { 30% { transform: scale(1.06) rotate(3deg); } to { transform: translateY(-60px) scale(.7) rotate(-12deg); opacity: 0; clip-path: polygon(0 18%, 100% 8%, 100% 100%, 0 100%); } }

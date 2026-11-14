@@ -560,7 +560,7 @@ async function analyzeCard(manual = false) {
     if (!R.num) R.num = VISION.parseNumber(await ocr(strip(hi, HW, Math.round(HH * 0.9), Math.round(HH * 0.095)), { tessedit_char_whitelist: '0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ', tessedit_pageseg_mode: '11' }));
     R.year = VISION.parseYear(bottom);
     const pool = scanCards();
-    R.name = LOGIC.bestName(R.raw, [...new Set(pool.map(c => c.name))])?.name || LOGIC.bestName(R.raw, await dexNames(), 0.72)?.name || null;
+    R.name = LOGIC.bestName(R.raw, [...new Set(pool.map(c => c.name))])?.name || LOGIC.bestName(R.raw, await dexNames(), 0.72)?.name || await apiName(R.raw);
     if (R.year) A.cardYear = R.year;
     renderDiag();
     R.hi = hi;
@@ -582,6 +582,19 @@ async function symbolOf(st, band, w, h) {
     }
     return VISION.symbolScore(cv, band, w, h, sym.px, sym.sw, sym.sh);
   } catch { return 0; }
+}
+
+// Nom absent du Pokédex (Dresseur, Stade, Objet, Énergie…) : on cherche le mot lu le plus long dans la base
+async function apiName(raw) {
+  const words = LOGIC.cleanName(raw).split(' ').filter(w => w.length >= 4).sort((a, b) => b.length - a.length).slice(0, 2);
+  for (const w of words) {
+    try {
+      const names = [...new Set((await getJSON('/cards?name=' + encodeURIComponent(w))).map(c => c.name))];
+      const bn = LOGIC.bestName(raw, names, 0.7);
+      if (bn) return bn.name;
+    } catch { return null; }
+  }
+  return null;
 }
 
 // Ce qui a été lu -> la carte : d'abord dans les extensions activées, sinon dans toute la base
