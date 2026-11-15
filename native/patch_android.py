@@ -3,7 +3,7 @@ import pathlib, shutil, sys
 root = pathlib.Path('android/app/src/main')
 m = root / 'AndroidManifest.xml'
 x = m.read_text()
-perms = ''.join(f'\n    <uses-permission android:name="android.permission.{p}" />' for p in ['CAMERA', 'VIBRATE', 'REQUEST_INSTALL_PACKAGES'])
+perms = ''.join(f'\n    <uses-permission android:name="android.permission.{p}" />' for p in ['CAMERA', 'VIBRATE', 'REQUEST_INSTALL_PACKAGES', 'UPDATE_PACKAGES_WITHOUT_USER_ACTION'])
 x = x.replace('<uses-permission android:name="android.permission.INTERNET" />', '<uses-permission android:name="android.permission.INTERNET" />' + perms)
 x = x.replace('</application>', '''    <receiver android:name=".PokeWidget" android:exported="false" android:label="PokeScan">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
@@ -16,9 +16,13 @@ x = x.replace('</application>', '''    <service android:name=".ScanTile" android
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
         </service>
+        <receiver android:name=".UpdateReceiver" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
+            <intent-filter><action android:name="fr.pierrick.pokescan.UPDATE_STATUS" /></intent-filter>
+        </receiver>
     </application>''')
 m.write_text(x)
-assert x.count('android.permission.') == 5 and 'PokeWidget' in x and 'shortcuts' in x, 'manifeste non modifié'
+assert x.count('android.permission.') == 6 and 'PokeWidget' in x and 'shortcuts' in x, 'manifeste non modifié'
 src = pathlib.Path('native')
 for j in src.glob('*.java'): shutil.copy(j, root / 'java/fr/pierrick/pokescan' / j.name)
 shutil.copytree(src / 'res', root / 'res', dirs_exist_ok=True)

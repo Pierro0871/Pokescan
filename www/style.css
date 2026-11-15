@@ -327,3 +327,6 @@ html.native-cam #video, html.native-cam #overlay { visibility: hidden; }
 .flatshot polygon { fill: rgba(255,203,5,.12); stroke: var(--acc); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .flatshot b { position: absolute; transform: translate(-50%, -50%); background: var(--acc); color: #111; border-radius: 50%; width: 26px; height: 26px; display: grid; place-items: center; font-size: 14px; }
 .pnum { flex: none; background: var(--acc); color: #111; border-radius: 50%; width: 22px; height: 22px; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+#update .grow { flex: 1; }
+.upbar { flex: 0 0 90px; height: 8px; border-radius: 4px; background: rgba(0,0,0,.2); overflow: hidden; }
+.upbar i { display: block; height: 100%; width: 0; background: #111; transition: width .3s; }
