@@ -268,6 +268,116 @@
     return { theyCanGive: give, iCanGive: get };
   }
 
-  const api = { rankSets, similar, cleanName, bestName, packOdds, deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
+
+  // ---------- scan rapide : base complète + texte d'abord ----------
+  // meta (release « index ») -> cartes, extensions et tables de recherche par numéro et par nom.
+  // tr : nom anglais -> nom français (Pokédex) pour les extensions sans données françaises.
+  function buildIndex(meta, tr = n => '') {
+    const sets = meta.sets.map(([id, fr, en, date, official, total, abbr, serie]) => ({ id, name: fr || en, nameEn: en, date, year: +String(date).slice(0, 4) || 0, official, total, abbr, serie, enOnly: !fr }));
+    const byNum = new Map(), byName = new Map();
+    const cards = meta.cards.map(([id, localId, si, fr, en, image, emb], i) => {
+      const c = { i, id, localId, set: si, name: fr || tr(en) || en, nameEn: en || fr, image, emb: !!emb };
+      const n = localNum(c);
+      if (isFinite(n)) (byNum.get(n) || byNum.set(n, []).get(n)).push(i);
+      for (const nm of new Set([c.name, c.nameEn])) if (nm) { const k = norm(nm); (byName.get(k) || byName.set(k, []).get(k)).push(i); }
+      return c;
+    });
+    const names = [...byName.keys()], nc = names.map(n => n.replace(/[^a-z0-9]/g, '')), big = new Map();
+    nc.forEach((s, id) => { for (const g of new Set(bigrams(s))) (big.get(g) || big.set(g, []).get(g)).push(id); });
+    return { v: meta.v, sets, cards, byNum, byName, names, nc, big, cnt: new Uint16Array(names.length) };
+  }
+  const bigrams = s => { const o = []; for (let i = 0; i < s.length - 1; i++) o.push(s.slice(i, i + 2)); return o; };
+  // Noms de la base les plus proches du texte lu (tolère les erreurs de lecture)
+  function namesFor(ix, text, min = 0.75) {
+    const words = norm(cleanName(text)).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+    let best = null, bs = 0;
+    const cnt = ix.cnt;
+    // morceaux du texte lu (1 à 4 mots) comparés aux noms qui partagent assez de paires de lettres
+    for (let i = 0; i < words.length; i++) for (let j = i + 1; j <= Math.min(words.length, i + 4); j++) {
+      const w = words.slice(i, j).join(''), m = w.length;
+      if (m < 3) continue;
+      const touched = [];
+      for (const g of new Set(bigrams(w))) for (const id of ix.big.get(g) || []) if (cnt[id]++ === 0) touched.push(id);
+      for (const id of touched) {
+        const n = ix.nc[id].length, M = Math.max(m, n), k = Math.floor((1 - min) * M + 1e-9);
+        if (Math.abs(m - n) <= k && cnt[id] >= Math.min(m, n) - 1 - 2 * k) {
+          const s = similar(w, ix.nc[id]);
+          if (s > bs || (s === bs && best && n > ix.nc[best].length)) { bs = s; best = id; }
+        }
+        cnt[id] = 0;
+      }
+    }
+    return best != null && bs >= min ? { name: ix.names[best], score: bs, ids: ix.byName.get(ix.names[best]) || [] } : null;
+  }
+  // Décision « texte d'abord » : numéro/total + nom + année, l'image départage.
+  // r = VISION.readLines(...), img = { ids, sc } (200 plus proches par l'image, peut manquer).
+  // -> { list: [{ i, s }], sure, by: [...] }
+  function decideText(r, ix, img = {}, opts = {}) {
+    const IS = new Map(); (img.ids || []).forEach((id, k) => IS.set(id, img.sc[k]));
+    const floor = img.sc?.length ? img.sc[img.sc.length - 1] - 0.02 : 0;
+    const imgOf = i => IS.has(i) ? IS.get(i) : floor;
+    const okSet = opts.only ? i => ix.cards[i].set === opts.only : () => true;
+    const by = [];
+    let C = null, N = null, nameScore = 0;
+    if (r.num) {
+      const raw = (ix.byNum.get(r.num.num) || []).filter(okSet);
+      if (r.num.promo) {
+        const p = r.num.promo.toUpperCase();
+        // SWSH050 (lettres dans le numéro) ou MEP 091 (lettres = sigle de l'extension de promos)
+        C = raw.filter(i => {
+          const c = ix.cards[i], s = ix.sets[c.set], l = String(c.localId).toUpperCase().replace(/[^A-Z]/g, '');
+          return l ? l === p : (s.id.toUpperCase().replace(/[^A-Z]/g, '') === p || (s.abbr || '').toUpperCase() === p);
+        });
+      } else {
+        C = raw.filter(i => { const s = ix.sets[ix.cards[i].set]; return s.official === r.num.tot || s.total === r.num.tot; });
+        if (r.num.code) { const k = C.filter(i => (ix.sets[ix.cards[i].set].abbr || '').toUpperCase() === r.num.code); if (k.length) C = k; }
+      }
+      if (!C.length) C = null;
+    }
+    for (const t of r.names || []) {
+      const m = namesFor(ix, t);
+      if (m && m.score > nameScore) { nameScore = m.score; N = m.ids.filter(okSet); }
+    }
+    if (N && !N.length) N = null;
+    let X, sure = false;
+    const rank = ids => ids.map(i => ({ i, s: imgOf(i) })).sort((a, b) => b.s - a.s);
+    const yearFilter = list => {
+      if (!r.year || list.length < 2) return list;
+      const k = list.filter(x => { const y = ix.sets[ix.cards[x.i].set].year; return y >= r.year && y <= r.year + 1; });
+      if (k.length && k.length < list.length) by.push('année');
+      return k.length ? k : list;
+    };
+    const gap = l => l.length > 1 ? l[0].s - l[1].s : 1;
+    if (C && N) {
+      const both = C.filter(i => N.includes(i));
+      if (both.length) {
+        by.push('numéro', 'nom');
+        X = yearFilter(rank(both));
+        sure = X.length === 1 || gap(X) >= 0.03;
+      } else { // désaccord : le numéro (plus fiable) puis le nom
+        by.push('numéro');
+        X = yearFilter(rank(C)).concat(rank(N).slice(0, 3));
+      }
+    } else if (C) {
+      by.push('numéro');
+      X = yearFilter(rank(C));
+      const inImg = IS.has(X[0].i) || !img.ids;
+      sure = inImg && (X.length === 1 ? true : gap(X) >= 0.05 && IS.has(X[0].i) && img.ids.indexOf(X[0].i) < 20);
+    } else if (N) {
+      by.push('nom');
+      X = yearFilter(rank(N));
+      sure = (X.length === 1 && (IS.has(X[0].i) || !img.ids)) || (gap(X) >= 0.05 && img.ids && img.ids.indexOf(X[0].i) < 10);
+    } else if (img.ids?.length) {
+      by.push('image');
+      X = img.ids.slice(0, 5).filter(okSet).map((i, k) => ({ i, s: img.sc[k] }));
+      sure = !!X.length && X[0].s >= 0.6 && gap(X) >= 0.08;
+    } else return { list: [], sure: false, by };
+    const seen = new Set();
+    X = X.filter(x => !seen.has(x.i) && seen.add(x.i)).slice(0, 6);
+    if (IS.size && X.length && IS.has(X[0].i)) by.push('image');
+    return { list: X, sure: sure && X.length > 0, by: [...new Set(by)], nameScore };
+  }
+
+  const api = { buildIndex, namesFor, decideText, rankSets, similar, cleanName, bestName, packOdds, deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
   if (typeof module !== 'undefined') module.exports = api; else root.LOGIC = api;
 })(this);

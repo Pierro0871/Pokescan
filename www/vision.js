@@ -244,6 +244,21 @@
     return best;
   }
 
-  const api = { typeScores, typeKey, quality, orbFeatures, freeFeatures, orbInliers, symbolScore, sheen, parseYear, parseGrade, findCard, findCards, orderCorners, warp, median, parseNumber };
+
+  // Lignes lues par le moteur natif (positions relatives à la carte, 0..1) -> nom, numéro, année
+  const GENERIC = /^(DRESSEUR|TRAINER|SUPPORTER|SUPPORT|OBJET|ITEM|STADE|STADIUM|OUTIL|TOOL|ENERGIE|ÉNERGIE|ENERGY|POKEMON|POKÉMON|BASE|DE BASE|BASIC|NIVEAU \d|STAGE \d|STADE \d|EVOLUTION|ÉVOLUTION|ÉVOLUE DE.*|EVOLVES FROM.*|PV ?\d*|HP ?\d*|\d+ ?PV|\d+ ?HP)$/i;
+  function readLines(lines) {
+    const ls = (lines || []).filter(l => l && l.t && String(l.t).trim());
+    const top = ls.filter(l => l.y < 0.2 && l.y > -0.06)
+      .map(l => ({ ...l, t: String(l.t).replace(/\b(PV|HP)\s*\d+.*$/i, '').trim() }))
+      .filter(l => l.t.length >= 3 && /[A-Za-zÀ-ÿ]{3}/.test(l.t) && !GENERIC.test(l.t))
+      .sort((a, b) => b.h - a.h); // le nom est le texte le plus grand du haut
+    const bottom = ls.filter(l => l.y > 0.8).sort((a, b) => a.y - b.y || a.x - b.x).map(l => l.t).join('\n');
+    let num = null;
+    for (const l of ls.filter(l => l.y > 0.8)) { const n = parseNumber(l.t); if (n && !n.promo) { num = n; break; } if (n && !num) num = n; }
+    return { names: top.slice(0, 3).map(l => l.t), num, year: parseYear(bottom), bottom };
+  }
+
+  const api = { readLines, typeScores, typeKey, quality, orbFeatures, freeFeatures, orbInliers, symbolScore, sheen, parseYear, parseGrade, findCard, findCards, orderCorners, warp, median, parseNumber };
   if (typeof module !== 'undefined') module.exports = api; else root.VISION = api;
 })(this);

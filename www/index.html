@@ -17,6 +17,7 @@
       <button class="chip on" data-var="normal">Normale</button><button class="chip" data-var="reverse">Reverse</button><button class="chip" data-var="holo">Holo</button>
     </div>
     <div class="row scanpick"><select id="scan-lang" class="langsel" aria-label="Langue"><option value="fr">🇫🇷</option><option value="en">🇬🇧</option><option value="de">🇩🇪</option><option value="it">🇮🇹</option><option value="es">🇪🇸</option><option value="pt">🇵🇹</option><option value="ja">🇯🇵</option></select><select id="scan-set" aria-label="Extension à scanner" class="grow"></select><select id="scan-year" aria-label="Année"></select></div>
+    <div id="fastbar" class="row small" hidden></div>
     <div id="cam">
       <video id="video" playsinline muted></video>
       <canvas id="overlay"></canvas>
@@ -75,6 +76,7 @@
 <script async src="vendor/opencv.js"></script>
 <script src="core.js"></script>
 <script src="scan.js"></script>
+<script src="fast.js"></script>
 <script src="vendor/qrcode.js"></script>
 <script src="vendor/jsQR.js"></script>
 <script src="views.js"></script>
