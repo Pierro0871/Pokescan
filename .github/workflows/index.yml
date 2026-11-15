@@ -1,0 +1,21 @@
+name: Index du scan
+# Base complète (toutes les cartes FR + EN) et empreintes d'images, recalculées chaque mois
+on:
+  schedule: [{ cron: '17 3 2 * *' }]
+  workflow_dispatch:
+  push: { branches: [main], paths: ['tools/**', '.github/workflows/index.yml'] }
+permissions: { contents: write }
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install tensorflow-cpu==2.20.0 aiohttp==3.12.15 pillow==11.3.0 numpy
+      - run: python tools/build_index.py --out dist
+      - env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release view index >/dev/null 2>&1 || gh release create index --prerelease --latest=false --title "Index du scan" --notes "Base utilisée par le scan rapide de PokeScan (téléchargée depuis l'appli). Ne pas installer."
+          gh release upload index dist/meta.json.gz dist/emb.bin dist/model.tflite --clobber
