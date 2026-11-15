@@ -476,9 +476,30 @@ function renderIllus() {
     <h2>Dans ta collection</h2>
     ${list.map(([n, s]) => `<button class="line" data-il="${esc(n)}"><span class="grow">${esc(n)}</span><b>${s.size}</b></button>`).join('') || '<p class="muted">Les illustrateurs apparaissent une fois les infos des cartes chargées (en ligne).</p>'}
     <div id="search-res"></div>`;
-  const go = n => { $('#poke-body').querySelectorAll('.line,h2').forEach(x => x.remove()); search(n, 'illustrator'); };
-  $('#il-form').onsubmit = e => { e.preventDefault(); const n = $('#il-q').value.trim(); if (n) go(n); };
-  $$('[data-il]').forEach(b => b.onclick = () => go(b.dataset.il));
+  $('#il-form').onsubmit = e => {
+    e.preventDefault(); const q = LOGIC.norm($('#il-q').value.trim()); if (!q) return;
+    const hit = list.find(([n]) => LOGIC.norm(n) === q) || list.find(([n]) => LOGIC.norm(n).includes(q));
+    if (hit) openIllus(hit[0]); else openIllus($('#il-q').value.trim(), true);
+  };
+  $$('[data-il]').forEach(b => b.onclick = () => openIllus(b.dataset.il));
+}
+// Cartes d'un illustrateur : seulement les miennes (toutes ses cartes sur demande)
+function openIllus(name, all = false) {
+  const body = $('#poke-body');
+  const es = S.coll.filter(e => S.meta[e.cardId]?.i === name);
+  const cards = Object.values(Object.fromEntries(es.map(e => [e.cardId, { id: e.cardId, localId: e.localId, name: e.name, image: e.image, photo: e.photo, setId: e.setId, setName: e.setName }])));
+  const date = c => setInfo(c.setId)?.releaseDate || '';
+  cards.sort((a, b) => date(b).localeCompare(date(a)));
+  const val = es.reduce((a, e) => a + (FP.unitPrice(S.prices[e.cardId], e.variant, e.cond, S.coef).trend || 0) * e.qty, 0);
+  body.innerHTML = `<button class="ghost" id="il-back">← Illustrateurs</button><h1>🎨 ${esc(name)}</h1>
+    <div class="kpis three"><div><b>${cards.length}</b><span>cartes différentes</span></div><div><b>${es.reduce((a, e) => a + e.qty, 0)}</b><span>exemplaires</span></div><div><b>${eur(val)}</b><span>valeur</span></div></div>
+    ${cards.length ? grid(cards, ownedIds(), c => c.name) : '<p class="muted">Aucune carte de cet illustrateur dans ta collection.</p>'}
+    <button class="ghost" id="il-all">🔎 Voir toutes ses cartes (même celles que je n'ai pas)</button>
+    <div id="search-res"></div>`;
+  $('#il-back').onclick = () => renderPoke('illus');
+  $$('#poke-body .grid .cell').forEach(b => b.onclick = () => openCard({ ...cards.find(c => c.id === b.dataset.id) }, () => openIllus(name)));
+  $('#il-all').onclick = () => { $('#il-all').remove(); search(name, 'illustrator'); };
+  if (all) $('#il-all').click();
 }
 
 // ---------- fiche Pokémon : toutes ses cartes ----------
