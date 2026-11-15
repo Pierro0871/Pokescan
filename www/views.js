@@ -618,7 +618,8 @@ function renderStats() {
     <div class="row"><span class="grow">Thème</span>${[['auto', 'Auto'], ['dark', 'Sombre'], ['light', 'Clair']].map(([k, l]) => `<button class="chip ${S.theme === k ? 'on' : ''}" data-th="${k}">${l}</button>`).join('')}</div>
     ${FS.ok ? `<div class="row"><span class="grow">Moteur du scan</span><select id="engine"><option value="auto" ${FS.engine !== 'web' ? 'selected' : ''}>⚡ Rapide (natif)</option><option value="web" ${FS.engine === 'web' ? 'selected' : ''}>Classique</option></select></div>
     <div class="row small"><span class="grow muted">Base du scan rapide : ${FS.ix ? `${FS.ix.cards.length.toLocaleString('fr')} cartes, du ${esc(FS.v || '?')}` : 'pas encore téléchargée'}</span><button class="ghost small" id="fs-redl">${FS.ix ? 'Retélécharger' : 'Télécharger'}</button></div>` : ''}
-    ${NATIVE ? `<div class="row"><label class="grow"><input type="checkbox" id="autoup" ${S.autoUpdate ? 'checked' : ''}> Installer les mises à jour automatiquement au lancement</label></div>` : ''}
+    ${NATIVE ? `<div class="row"><label class="grow"><input type="checkbox" id="autoup" ${S.autoUpdate ? 'checked' : ''}> Installer les mises à jour automatiquement au lancement</label></div>
+    <div class="row"><span class="grow">Installation des mises à jour</span><select id="upmode"><option value="app" ${S.upMode !== 'phone' ? 'selected' : ''}>Dans l'appli</option><option value="phone" ${S.upMode === 'phone' ? 'selected' : ''}>Installeur du téléphone</option></select></div>` : ''}
     <div class="row"><span class="grow">💰 Alerte carte de valeur dès</span><select id="richmin">${[0, 5, 10, 20, 50, 100].map(v => `<option value="${v}" ${(S.richMin ?? 20) === v ? 'selected' : ''}>${v ? eur(v) : 'Jamais'}</option>`).join('')}</select><button class="ghost small" id="rich-try">▶</button></div>
     <div class="row"><span class="grow">Son du scan</span><select id="snd">${Object.entries(SOUNDS).map(([k, v]) => `<option value="${k}" ${(S.sound || 'bip') === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select><button class="ghost small" id="snd-try">▶</button></div>
     <div class="row"><span class="grow">Couleur</span>${Object.entries(ACCENTS).map(([k, c]) => `<button class="swatch ${(S.accent || 'jaune') === k ? 'on' : ''}" data-ac="${k}" style="background:${c}" aria-label="${k}"></button>`).join('')}</div>
@@ -647,6 +648,7 @@ function renderStats() {
   $$('[data-rk]').forEach(b => b.onclick = () => { S.rankBy = b.dataset.rk; renderStats(); });
   if ($('#engine')) $('#engine').onchange = e => { FS.engine = e.target.value; kv.set('engine', FS.engine); fsBar(); toast(FS.engine === 'web' ? 'Scan classique (moteur web)' : '⚡ Scan rapide (moteur natif)'); };
   if ($('#fs-redl')) $('#fs-redl').onclick = () => fsDownload().then(renderStats);
+  $('#upmode') && ($('#upmode').onchange = e => { S.upMode = e.target.value; kv.set('upmode', S.upMode); });
   $('#autoup') && ($('#autoup').onchange = e => { S.autoUpdate = e.target.checked; kv.set('autoupdate', S.autoUpdate); });
   $('#richmin').onchange = e => { S.richMin = +e.target.value; kv.set('richmin', S.richMin); };
   $('#rich-try').onclick = () => celebrate({ id: 'demo', name: 'Démo', setName: '', localId: '' }, 'normal', 150);
@@ -809,12 +811,13 @@ async function installUpdate(url, b) {
   const cb = Capacitor.nativeCallback('ApkUpdater', 'addListener', { eventName: 'progress' }, d => {
     if (!d) return;
     const pc = d.total > 0 ? Math.min(100, d.done / d.total * 100) : 0;
-    b.querySelector('span').textContent = d.step === 'install' ? '⚙️ Installation… PokeScan va se fermer puis se rouvrir' : `⬇️ Téléchargement ${mo(d.done)} / ${mo(d.total)}`;
+    b.querySelector('span').textContent = d.step === 'install' ? (S.upMode === 'phone' ? '⚙️ Ouverture de l\'installeur…' : '⚙️ Installation… PokeScan va se fermer puis se rouvrir') : `⬇️ Téléchargement ${mo(d.done)} / ${mo(d.total)}`;
     b.querySelector('.upbar i').style.width = (d.step === 'install' ? 100 : pc) + '%';
   });
   try {
     await Promise.all([kv.set('coll', S.coll), kv.set('hist', S.hist), kv.set('prices', S.prices)]); // tout est enregistré avant la fermeture
-    await Capacitor.nativePromise('ApkUpdater', 'install', { url });
+    await Capacitor.nativePromise('ApkUpdater', 'install', { url, mode: S.upMode || 'app' });
+    if (S.upMode === 'phone') b.hidden = true;
   } catch (err) { b.innerHTML = `<span>Échec : ${esc(err.message)}</span><button>Réessayer</button>`; b.querySelector('button').onclick = () => installUpdate(url, b); }
   finally { installUpdate.busy = false; try { Capacitor.nativePromise('ApkUpdater', 'removeListener', { eventName: 'progress', callbackId: cb }); } catch { } }
 }
@@ -829,7 +832,7 @@ async function init() {
   S.coef = { ...FP.DEFAULT_COEF, ...(await g('coef', {})) };
   await loadLang(await g('lang', 'fr'));
   S.meta = await g('meta', {}); S.hist = await g('hist', []); S.valhist = await g('valhist', {});
-  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []); S.cardBack = await g('cardback', null); S.sound = await g('sound', 'bip'); S.accent = await g('accent', 'jaune'); S.richMin = await g('richmin', 20); S.autoUpdate = await g('autoupdate', false); S.phist = await g('phist', {});
+  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []); S.cardBack = await g('cardback', null); S.sound = await g('sound', 'bip'); S.accent = await g('accent', 'jaune'); S.richMin = await g('richmin', 20); S.autoUpdate = await g('autoupdate', false); S.upMode = await g('upmode', 'app'); S.phist = await g('phist', {});
   applyTheme(); matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
   $$('#tabs button').forEach(b => b.onclick = () => show(b.dataset.view));
   $('#sheet').onclick = e => { if (e.target.id === 'sheet') closeSheet(); };
@@ -848,7 +851,7 @@ async function init() {
   setTimeout(() => upgradeFps().catch(() => { }), 3000);
   if (NATIVE) {
     checkUpdate(false);
-    Capacitor.nativePromise('ApkUpdater', 'lastError').then(r => r?.error && toast('Dernière mise à jour non installée : ' + esc(r.error))).catch(() => { });
+    Capacitor.nativePromise('ApkUpdater', 'lastError').then(r => r?.error && toast('La dernière mise à jour a été refusée par Android (' + esc(r.error) + ') : si ça recommence, choisis « Installeur du téléphone » dans Stats.')).catch(() => { });
   }
 }
 init();

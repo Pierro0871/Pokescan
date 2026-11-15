@@ -4,7 +4,9 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInstaller;
+import android.net.Uri;
 import android.os.Build;
+import androidx.core.content.FileProvider;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -30,7 +32,7 @@ public class ApkUpdater extends Plugin {
         Context ctx = getContext();
         new Thread(() -> {
             try {
-                File f = new File(ctx.getCacheDir(), "PokeScan-update.apk");
+                File f = apkFile(ctx);
                 HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
                 c.setInstanceFollowRedirects(true);
                 c.setConnectTimeout(20000); c.setReadTimeout(30000);
@@ -46,6 +48,12 @@ public class ApkUpdater extends Plugin {
                     }
                 }
                 progress("install", total, total);
+                // « phone » : installeur du téléphone (Xiaomi…), comme avant ; sinon service d'installation d'Android
+                if ("phone".equals(call.getString("mode", "app"))) {
+                    if (!openWithInstaller(ctx)) throw new Exception("installeur introuvable");
+                    call.resolve();
+                    return;
+                }
                 PackageInstaller pi = ctx.getPackageManager().getPackageInstaller();
                 PackageInstaller.SessionParams p = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
                 p.setAppPackageName(ctx.getPackageName());
@@ -68,6 +76,20 @@ public class ApkUpdater extends Plugin {
                 call.reject(e.getMessage());
             }
         }).start();
+    }
+
+    static File apkFile(Context ctx) { return new File(ctx.getCacheDir(), "PokeScan-update.apk"); }
+
+    // Ouvre l'APK téléchargée avec l'installeur du téléphone
+    static boolean openWithInstaller(Context ctx) {
+        try {
+            File f = apkFile(ctx);
+            if (!f.exists()) return false;
+            Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider", f);
+            ctx.startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK));
+            return true;
+        } catch (Exception e) { return false; }
     }
 
     private void progress(String step, long done, long total) {
