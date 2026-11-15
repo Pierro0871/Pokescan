@@ -204,10 +204,10 @@ public class NativeScan extends Plugin {
                         a.setAnalyzer(worker, this::analyze);
                         provider.unbindAll();
                         // photo pleine résolution pour « cartes à plat » ; sans elle si le téléphone ne gère pas les 3 usages
-                        ResolutionSelector hi = new ResolutionSelector.Builder()
+                        ResolutionSelector big = new ResolutionSelector.Builder()
                                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
                                 .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY).build();
-                        capture = new ImageCapture.Builder().setResolutionSelector(hi).setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build();
+                        capture = new ImageCapture.Builder().setResolutionSelector(big).setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build();
                         try {
                             camera = provider.bindToLifecycle((LifecycleOwner) getActivity(), CameraSelector.DEFAULT_BACK_CAMERA, p, a, capture);
                         } catch (Exception ex) {
