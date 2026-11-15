@@ -27,7 +27,7 @@ public class UpdateReceiver extends BroadcastReceiver {
             String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
             ctx.getSharedPreferences("update", Context.MODE_PRIVATE).edit().putString("error", msg == null ? "code " + status : msg).apply();
             // refus (Play Protect, sécurité du téléphone…) : on passe par l'installeur du téléphone, qui marche toujours
-            if (status != PackageInstaller.STATUS_FAILURE_ABORTED && ApkUpdater.openWithInstaller(ctx)) {
+            if (ApkUpdater.openWithInstaller(ctx)) { // y compris « ABORTED » : Play Protect / Xiaomi annulent l'installation sans demander
                 Toast.makeText(ctx, "Installation par l'installeur du téléphone…", Toast.LENGTH_LONG).show();
             } else {
                 Toast.makeText(ctx, "Mise à jour non installée : " + (msg == null ? "code " + status : msg), Toast.LENGTH_LONG).show();
