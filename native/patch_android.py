@@ -35,5 +35,7 @@ deps = """
     implementation "com.google.ai.edge.litert:litert:1.4.2"
 """
 t = t.replace('\ndependencies {', '\ndependencies {' + deps, 1)
-g.write_text(t); assert 'mlkit:text-recognition' in t, 'dépendances non ajoutées'
+# bibliothèques natives des téléphones seulement (pas les émulateurs x86) : APK bien plus légère
+t = t.replace('defaultConfig {', "defaultConfig {\n        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }", 1)
+g.write_text(t); assert 'mlkit:text-recognition' in t and 'abiFilters' in t, 'dépendances non ajoutées'
 print('android patché')
