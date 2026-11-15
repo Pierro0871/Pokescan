@@ -872,7 +872,8 @@ async function init() {
   setTimeout(() => upgradeFps().catch(() => { }), 3000);
   if (NATIVE) {
     checkUpdate(false);
-    Capacitor.nativePromise('ApkUpdater', 'lastError').then(r => r?.error && toast('La dernière mise à jour a été refusée par Android (' + esc(r.error) + ') : si ça recommence, choisis « Installeur du téléphone » dans Stats.')).catch(() => { });
+    // installation dans l'appli refusée par ce téléphone : on passe pour de bon par l'installeur du téléphone
+    Capacitor.nativePromise('ApkUpdater', 'lastError').then(r => { if (r?.error) { S.upMode = 'phone'; kv.set('upmode', 'phone'); toast('Ce téléphone refuse les mises à jour installées par l\'appli : elles passeront désormais par l\'installeur du téléphone.'); } }).catch(() => { });
   }
 }
 init();
