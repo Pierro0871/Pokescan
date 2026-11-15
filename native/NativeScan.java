@@ -8,7 +8,10 @@ import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.SystemClock;
 import android.util.Size;
+import android.graphics.Outline;
+import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
 import androidx.camera.core.Camera;
@@ -67,6 +70,7 @@ public class NativeScan extends Plugin {
     private FrameLayout box;
     private PreviewView preview;
     private Drawable oldBg;
+    private float radius = 0;
     private volatile float gx = 0.1f, gy = 0.1f, gw = 0.8f, gh = 0.8f; // cadre guide, relatif à la zone caméra
     private volatile boolean paused = false, busy = false;
     private volatile long last = 0;
@@ -168,6 +172,10 @@ public class NativeScan extends Plugin {
                     preview = new PreviewView(getContext());
                     preview.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
                     preview.setScaleType(PreviewView.ScaleType.FILL_CENTER);
+                    box.setClipToOutline(true);
+                    box.setOutlineProvider(new ViewOutlineProvider() {
+                        @Override public void getOutline(View v, Outline o) { o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), radius); }
+                    });
                     box.addView(preview, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                     parent.addView(box, 0, new ViewGroup.LayoutParams(1, 1));
                     oldBg = parent.getBackground();
@@ -222,6 +230,8 @@ public class NativeScan extends Plugin {
         lp.width = Math.max(1, Math.round(w)); lp.height = Math.max(1, Math.round(h));
         box.setLayoutParams(lp);
         box.setX(web.getX() + x); box.setY(web.getY() + y);
+        radius = call.getFloat("r", 16f) * k;
+        box.invalidateOutline();
         JSObject g = call.getObject("guide");
         if (g != null) {
             gx = (float) g.optDouble("x", gx); gy = (float) g.optDouble("y", gy);

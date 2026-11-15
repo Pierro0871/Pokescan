@@ -479,6 +479,8 @@ function renderStats() {
     ${histHTML()}
     <h2>Réglages</h2>
     <div class="row"><span class="grow">Thème</span>${[['auto', 'Auto'], ['dark', 'Sombre'], ['light', 'Clair']].map(([k, l]) => `<button class="chip ${S.theme === k ? 'on' : ''}" data-th="${k}">${l}</button>`).join('')}</div>
+    ${FS.ok ? `<div class="row"><span class="grow">Moteur du scan</span><select id="engine"><option value="auto" ${FS.engine !== 'web' ? 'selected' : ''}>⚡ Rapide (natif)</option><option value="web" ${FS.engine === 'web' ? 'selected' : ''}>Classique</option></select></div>
+    <div class="row small"><span class="grow muted">Base du scan rapide : ${FS.ix ? `${FS.ix.cards.length.toLocaleString('fr')} cartes, du ${esc(FS.v || '?')}` : 'pas encore téléchargée'}</span><button class="ghost small" id="fs-redl">${FS.ix ? 'Retélécharger' : 'Télécharger'}</button></div>` : ''}
     <div class="row"><span class="grow">Son du scan</span><select id="snd">${Object.entries(SOUNDS).map(([k, v]) => `<option value="${k}" ${(S.sound || 'bip') === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select><button class="ghost small" id="snd-try">▶</button></div>
     <div class="row"><span class="grow">Couleur</span>${Object.entries(ACCENTS).map(([k, c]) => `<button class="swatch ${(S.accent || 'jaune') === k ? 'on' : ''}" data-ac="${k}" style="background:${c}" aria-label="${k}"></button>`).join('')}</div>
     <p class="muted small">Coefficients de prix selon l'état (estimation appliquée au prix Near Mint de Cardmarket) :</p>
@@ -504,6 +506,8 @@ function renderStats() {
   $('#share-img').onclick = shareImage;
   $('#st-lang') && ($('#st-lang').onchange = e => { S.statLang = e.target.value; renderStats(); });
   $$('[data-rk]').forEach(b => b.onclick = () => { S.rankBy = b.dataset.rk; renderStats(); });
+  if ($('#engine')) $('#engine').onchange = e => { FS.engine = e.target.value; kv.set('engine', FS.engine); fsBar(); toast(FS.engine === 'web' ? 'Scan classique (moteur web)' : '⚡ Scan rapide (moteur natif)'); };
+  if ($('#fs-redl')) $('#fs-redl').onclick = () => fsDownload().then(renderStats);
   $('#snd').onchange = e => { S.sound = e.target.value; kv.set('sound', S.sound); playSound('add'); };
   $('#snd-try').onclick = () => playSound('add');
   $$('[data-ac]').forEach(b => b.onclick = () => { S.accent = b.dataset.ac; kv.set('accent', S.accent); applyTheme(); renderStats(); });
@@ -677,6 +681,7 @@ async function init() {
   $('#undo').onclick = () => doUndo(true); $('#redo').onclick = () => doUndo(false);
   bindScanUI();
   updateUndoUI();
+  await fsInit().catch(() => { });
   show('scan');
   if (!S.catalog) loadCatalog().catch(() => { }); else { loadDates().catch(() => { }); checkNewSets().catch(() => { }); }
   afterChange();

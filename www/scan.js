@@ -13,6 +13,10 @@ function cvReady() {
 async function startCam() {
   const v = $('#video');
   fillScanSets();
+  if (fsActive()) { // moteur natif : caméra native + texte + base complète
+    stopWebCam();
+    try { await fsStart(); return; } catch (err) { DIAG.err = 'moteur rapide indisponible : ' + err.message; }
+  } else fsStop();
   status(S.fpSets.length ? '' : 'Active d\'abord le scan d\'une extension dans Collection');
   if (!v.srcObject) {
     try {
@@ -30,18 +34,20 @@ async function startCam() {
   }
   clearTimeout(A.timer); loop();
 }
-function stopCam() {
+function stopCam() { fsStop(); stopWebCam(); }
+function stopWebCam() {
   clearTimeout(A.timer);
   const v = $('#video');
   v.srcObject?.getTracks().forEach(t => t.stop()); v.srcObject = null; A.track = null;
 }
 async function toggleTorch() {
+  if (FS.on) { A.torch = !A.torch; nsCall('torch', { on: A.torch }).catch(() => { A.torch = false; }); $('#torch').classList.toggle('on', A.torch); return; }
   if (!A.track) return;
   A.torch = !A.torch;
   try { await A.track.applyConstraints({ advanced: [{ torch: A.torch }] }); } catch { A.torch = false; }
   $('#torch').classList.toggle('on', A.torch);
 }
-function status(t) { $('#cam-msg').textContent = t || `Pose la carte dans le rectangle · ${S.fpSets.length} extension(s) activée(s)`; }
+function status(t) { $('#cam-msg').textContent = t || (FS.on && FS.ix ? `Pose la carte dans le rectangle · ${FS.ix.cards.length.toLocaleString('fr')} cartes connues` : `Pose la carte dans le rectangle · ${S.fpSets.length} extension(s) activée(s)`); }
 
 // Retour : vibration + petit son
 let audio;
@@ -312,6 +318,7 @@ async function loop() {
 }
 
 function resume(holdId) {
+  fsPause(false);
   A.grade = null; A.cardYear = null; A.analyzed = false; A.votes = []; A.conf = null;
   A.hold = holdId; A.paused = false; A.doubtSince = 0; A.lastTop = null;
   clearProp(); status();
@@ -677,6 +684,7 @@ function drawDebug(q, cr) {
 function renderDiag() {
   const el = $('#diag');
   if (!el || !A.debug) return;
+  if (FS.on) { el.innerHTML = fsDiag(); return; }
   const v = $('#video'), L = DIAG.last, withFp = S.fpCards.filter(c => c.fp).length;
   const cvState = CV ? 'prête' : window.cv ? 'chargement…' : 'non chargée';
   el.innerHTML = `<b>Diagnostic du scan</b>
@@ -697,6 +705,7 @@ function renderDiag() {
 function retryScan() {
   Object.assign(A, { res: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, grade: null, cardYear: null, lastKey: null, offering: false, sheen: null, analyzed: false, votes: [], conf: null });
   clearProp();
+  if (FS.on) { fsPause(false); return status('Scan relancé'); }
   if (DIAG.ocr === 'indisponible') { DIAG.ocr = 'pas encore utilisée'; DIAG.ocrErr = ''; ocrP = null; }
   const v = $('#video');
   if (!v.srcObject || v.srcObject.getVideoTracks().every(t => t.readyState === 'ended')) { stopCam(); startCam(); }
@@ -739,7 +748,13 @@ function flyToCollection(src, from) {
 // Animation : tout l'écran caméra est aspiré vers l'onglet Collection (carte reconnue et ajoutée)
 function flyCamera() {
   const v = $('#video'), tab = $('#tabs [data-view=coll]');
-  if (!v.videoWidth || !tab || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (!tab || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (!v.videoWidth) { // caméra native : pas d'image à capturer, juste le flash et l'onglet qui saute
+    A.flyUntil = Date.now() + 500;
+    const cm = $('#cam'); cm.classList.remove('flash'); void cm.offsetWidth; cm.classList.add('flash');
+    tab.classList.remove('bump'); void tab.offsetWidth; tab.classList.add('bump');
+    return;
+  }
   const cam = $('#cam').getBoundingClientRect(), to = tab.getBoundingClientRect();
   // petite capture (480 px de large suffit pour une image qui rétrécit) : rapide à dessiner
   const c = document.createElement('canvas'), k = Math.min(1, 480 / cam.width);
@@ -805,6 +820,7 @@ const boosterValue = b => b.cards.reduce((a, id) => a + (S.prices[id]?.trend || 
 // sure : une seule carte à confirmer ; sinon les 5 plus probables
 function propose(sure) {
   A.paused = true;
+  fsPause(true);
   if (sure) feedback('found');
   const res = A.res, box = $('#camprop'), list = sure ? res.slice(0, 1) : res;
   status(sure ? 'Carte reconnue' : 'Pas sûr : choisis la bonne carte');
@@ -824,7 +840,7 @@ function propose(sure) {
       ${sure ? '<button class="ghost" id="other">Pas celle-là</button>' : '<button class="ghost" id="notfound">Aucune : chercher par nom</button>'}
       <button class="ghost" id="retry">Réessayer</button>
     </div>
-    <p class="muted small">Le scan ne connaît que les extensions activées : ${esc(S.fpSets.map(setName).join(', '))}.</p>`;
+    <p class="muted small">${FS.on && FS.ix ? `Scan rapide : base complète (${FS.ix.cards.length.toLocaleString('fr')} cartes)` : `Le scan ne connaît que les extensions activées : ${esc(S.fpSets.map(setName).join(', '))}`}.</p>`;
   if (g) {
     const upd = () => { const n = parseFloat($('#g-g').value); A.grade = { co: $('#g-co').value, grade: isFinite(n) ? n : undefined, cert: $('#g-cert').value.trim() }; };
     ['#g-co', '#g-g', '#g-cert'].forEach(sel => $(sel).onchange = upd);
@@ -914,15 +930,22 @@ function bindScanUI() {
     $('#cam').classList.toggle('graded', A.mode === 'graded'); A.grade = null; A.hold = null;
     if (A.mode === 'batch') A.batch = { n: 0, v: 0 };
     renderBatch();
+    if (S.view === 'scan' && FS.ok && fsActive() !== FS.on) { stopCam(); startCam(); }
+    else requestAnimationFrame(fsPlace);
     A.paused = false; status({ page: 'Cadre toute la page du classeur, puis Analyser', graded: 'Cadre le boîtier entier, étiquette en haut', batch: 'Pose les cartes une par une : chaque carte reconnue s\'ajoute toute seule' }[A.mode] || '');
   });
   $('#quick-form').onsubmit = e => { e.preventDefault(); quickAdd($('#quick-q').value); };
   $('#retry-scan').onclick = retryScan;
-  $('#zoom').oninput = e => A.track?.applyConstraints({ advanced: [{ zoom: +e.target.value }] }).catch(() => { });
+  $('#zoom').oninput = e => FS.on ? nsCall('zoom', { ratio: +e.target.value }).catch(() => { }) : A.track?.applyConstraints({ advanced: [{ zoom: +e.target.value }] }).catch(() => { });
   // mise au point au toucher : sur la zone touchée, puis retour à l'autofocus continu
   $('#cam').addEventListener('click', async e => {
-    if (e.target.closest('button,input,select,#camprop,#batchc') || !A.track) return;
+    if (e.target.closest('button,input,select,#camprop,#batchc') || !(A.track || FS.on)) return;
     const r = $('#cam').getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    if (FS.on) {
+      const ring = document.createElement('span'); ring.className = 'focusring'; ring.style.left = e.clientX - r.left + 'px'; ring.style.top = e.clientY - r.top + 'px';
+      $('#cam').appendChild(ring); setTimeout(() => ring.remove(), 900);
+      return void nsCall('focus', { x, y }).catch(() => { });
+    }
     const ring = document.createElement('span'); ring.className = 'focusring'; ring.style.left = e.clientX - r.left + 'px'; ring.style.top = e.clientY - r.top + 'px';
     $('#cam').appendChild(ring); setTimeout(() => ring.remove(), 900);
     try {
@@ -930,7 +953,7 @@ function bindScanUI() {
       clearTimeout(A.focusT); A.focusT = setTimeout(() => A.track?.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => { }), 4000);
     } catch { status('Mise au point au toucher non disponible sur ce téléphone'); }
   });
-  $('#analyze').onclick = () => { A.paused = false; clearProp(); analyzeCard(true); };
+  $('#analyze').onclick = () => { if (FS.on) return A.res ? (A.conf = null, propose(false)) : toast('Vise une carte d\'abord'); A.paused = false; clearProp(); analyzeCard(true); };
   $('#scan-set').onchange = e => chooseScanSet(e.target.value);
   $('#scan-year').onchange = e => { A.year = e.target.value; fillScanSets(); retryScan(); status(A.year ? `Recherche limitée à ${A.year}` : ''); };
   kv.get('debug').then(v => { A.debug = !!v; $('#debug').checked = A.debug; $('#diag').hidden = !A.debug; });
