@@ -317,7 +317,9 @@ async function loop() {
   if (S.view === 'scan') A.timer = setTimeout(loop, 150);
 }
 
+const setYear = id => (setInfo(id)?.releaseDate || FS.ix?.sets.find(s => s.id === id)?.date || '').slice(0, 4);
 function resume(holdId) {
+  A.rejected = null;
   fsPause(false);
   A.grade = null; A.cardYear = null; A.analyzed = false; A.votes = []; A.conf = null;
   A.hold = holdId; A.paused = false; A.doubtSince = 0; A.lastTop = null;
@@ -372,6 +374,29 @@ function confidence(list, extra = {}) {
   if (extra.orb) { c += 0.2; parts.push('détails'); }
   if (extra.symbol) { c += 0.1; parts.push('symbole'); }
   return { pct: Math.round(Math.max(0.05, Math.min(0.99, c)) * 100), parts };
+}
+
+// « Pas celle-là » : même nom (et même numéro lu), d'abord la même extension, puis les extensions de la même période
+function otherCards(bad) {
+  (A.rejected ||= new Set()).add(bad.id);
+  const ix = FS.ix || fsMini();
+  let list = [];
+  if (ix) {
+    const ids = new Set();
+    for (const n of [bad.name, ix.cards.find(c => c.id === bad.id)?.nameEn]) for (const i of ix.byName.get(LOGIC.norm(n || '')) || []) ids.add(i);
+    for (const t of FS.read?.names || []) for (const i of LOGIC.namesFor(ix, t)?.ids || []) ids.add(i);
+    const num = FS.read?.num;
+    if (num && !num.promo) for (const i of ix.byNum.get(num.num) || []) { const s = ix.sets[ix.cards[i].set]; if (s.official === num.tot || s.total === num.tot) ids.add(i); }
+    const ref = ix.sets.find(s => s.id === bad.setId), y0 = ref?.year || 0;
+    list = [...ids].filter(i => !A.rejected.has(ix.cards[i].id)).map(i => {
+      const c = ix.cards[i], s = ix.sets[c.set];
+      return { i, k: (s.id === bad.setId ? 0 : 1000) + (y0 && s.year ? Math.abs(s.year - y0) * 10 : 500) + (LOGIC.norm(c.name) === LOGIC.norm(bad.name) ? 0 : 5) };
+    }).sort((a, b) => a.k - b.k).slice(0, 12).map(x => ({ card: fsCard(ix, x.i), d: 0.5 }));
+  }
+  if (!list.length) list = (A.res || []).filter(r => !A.rejected.has(r.card.id));
+  if (!list.length) { toast('Aucune autre carte de ce nom : cherche-la par nom'); resume(bad.id); show('poke'); return; }
+  A.res = list; A.conf = null;
+  propose(false, `Autres « ${bad.name} » : même extension d'abord, puis même période`);
 }
 
 // Propositions affichées par-dessus l'image caméra
@@ -908,7 +933,7 @@ function endBooster() {
 const boosterValue = b => b.cards.reduce((a, id) => a + (S.prices[id]?.trend || 0), 0);
 
 // sure : une seule carte à confirmer ; sinon les 5 plus probables
-function propose(sure) {
+function propose(sure, title) {
   A.paused = true;
   fsPause(true);
   if (sure) feedback('found');
@@ -916,10 +941,10 @@ function propose(sure) {
   status(sure ? 'Carte reconnue' : 'Pas sûr : choisis la bonne carte');
   const g = A.mode === 'graded' ? A.grade || {} : null;
   const sv = A.sheen ? `<p class="small sheen">✨ ${A.sheen === 'reverse' ? 'Reverse' : 'Holo'} détecté${A.autoVar ? ' : sera ajoutée comme ça' : ' (coche « Variante auto » pour l\'utiliser)'}</p>` : '';
-  box.innerHTML = sv + (sure ? '' : '<p class="muted">Touche la bonne carte pour l\'ajouter :</p>') + list.map((m, i) => `
+  box.innerHTML = sv + (sure ? '' : `<p class="muted">${esc(title || 'Touche la bonne carte pour l\'ajouter :')}</p>`) + list.map((m, i) => `
     <button class="match ${sure ? 'sure' : ''}" data-i="${i}">
       ${imgOf(m.card) ? `<img src="${esc(imgOf(m.card))}" alt="">` : ''}
-      <span class="grow"><b>${esc(m.card.name)}</b><br><span class="muted">${esc(m.card.setName)} · n° ${esc(m.card.localId)}</span>${sure ? '<br><span class="add">Toucher pour ajouter</span>' : ''}
+      <span class="grow"><b>${esc(m.card.name)}</b><br><span class="muted">${esc(m.card.setName)}${setYear(m.card.setId) ? ' (' + setYear(m.card.setId) + ')' : ''} · n° ${esc(m.card.localId)}</span>${sure ? '<br><span class="add">Toucher pour ajouter</span>' : ''}
         ${sure && A.conf ? `<span class="conf"><i style="width:${A.conf.pct}%"></i></span><span class="small muted">Confiance ${A.conf.pct} %${A.conf.parts.length ? ' · ' + A.conf.parts.join(', ') : ''}</span>` : ''}</span>
     </button>`).join('') + `
     ${g ? `<div class="row gradebox"><span>🏷️ Étiquette lue :</span>
@@ -937,7 +962,7 @@ function propose(sure) {
   }
   box.querySelectorAll('.match').forEach(b => b.onclick = () => choose(list[+b.dataset.i].card, b.querySelector('img') || b));
   $('#retry').onclick = () => resume(res[0].card.id);
-  if (sure) $('#other').onclick = () => propose(false);
+  if (sure) $('#other').onclick = () => otherCards(res[0].card);
   else $('#notfound').onclick = () => { resume(res[0].card.id); show('poke'); $('#search-q')?.focus(); };
 }
 
