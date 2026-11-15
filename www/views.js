@@ -37,6 +37,7 @@ function renderColl() {
     </div>
     <div class="row">${[['', 'Toutes'], ['started', 'Commencées'], ['done', 'Complètes'], ['none', 'Pas commencées'], ['scan', 'Scan activé']].map(([k, l]) => `<button class="chip ${f.state === k ? 'on' : ''}" data-st="${k}">${l}</button>`).join('')}</div>
     ${allTags().length ? `<div class="row tagrow"><span class="muted small">🏷️</span>${allTags().map(t => `<button class="chip tag" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
+    <button class="setrow" id="allgrid"><span class="sym">🗂️</span><span class="grow"><b>Toute ma collection</b><br><span class="muted small">Toutes tes cartes en grille, triées comme tu veux</span></span><span class="count">${new Set(S.coll.filter(e => langOf(e) === S.lang).map(e => e.cardId)).size}</span></button>
     <button class="setrow" id="review"><span class="sym">🧐</span><span class="grow"><b>Passer en revue ma collection</b><br><span class="muted small">Carte par carte en 3D, plein écran : choisis l'état de chacune</span></span></button>
     <button class="setrow" id="wanted"><span class="sym">🔎</span><span class="grow"><b>Cartes à trouver</b><br><span class="muted small">Ce qui te manque dans tes extensions commencées, par prix</span></span></button>
     <button class="setrow" id="perso"><span class="sym">✍️</span><span class="grow"><b>Mes cartes perso</b><br><span class="muted small">Cartes absentes de la base, ajoutées à la main</span></span><span class="count">${persoN}</span></button>
@@ -73,6 +74,7 @@ function renderColl() {
   $('#perso').onclick = openPerso;
   $('#wanted').onclick = () => openWanted();
   $('#review').onclick = () => openReview();
+  $('#allgrid').onclick = () => openAll();
   el.querySelector('.langsel').onchange = e => switchLang(e.target.value);
   $$('[data-tag]').forEach(b => b.onclick = () => openTag(b.dataset.tag));
   $('#refresh-cat').onclick = () => loadCatalog().then(() => toast('Liste à jour')).catch(err => toast('Erreur : ' + esc(err.message)));
@@ -303,6 +305,64 @@ async function checkNewSets() {
     try { await downloadSet(await getSet(st.id)); toast(`${esc(st.name)} est prête pour le scan`); } catch (err) { toast('Erreur : ' + esc(err.message)); }
     b.hidden = true; S.redrawColl?.();
   };
+}
+
+// ---------- toute ma collection en grille ----------
+function openAll() {
+  const el = $('#view-coll'), o = S.allOpt ||= { sort: 'recent', q: '', lang: S.lang, v: '', dup: false, size: 'm', limit: 300 };
+  S.redrawColl = openAll;
+  const by = {};
+  for (const e of S.coll) {
+    if (o.lang !== '*' && langOf(e) !== o.lang) continue;
+    if (o.v && e.variant !== o.v) continue;
+    const c = by[e.cardId] ||= { id: e.cardId, localId: e.localId, name: e.name, image: e.image, photo: e.photo, setId: e.setId, setName: e.setName, qty: 0, value: null, first: Infinity, last: 0, vars: new Set() };
+    c.qty += e.qty; c.vars.add(e.variant);
+    const u = FP.unitPrice(S.prices[e.cardId], e.variant, e.cond, S.coef).trend;
+    if (u != null) c.value = (c.value || 0) + u * e.qty;
+    if (e.added) { c.first = Math.min(c.first, e.added); c.last = Math.max(c.last, e.added); }
+  }
+  // dernier scan connu par l'historique
+  for (const h of S.hist) if (h.d > 0 && by[h.cardId]) { const c = by[h.cardId]; c.last = Math.max(c.last, h.t); c.first = Math.min(c.first, h.t); }
+  const q = LOGIC.norm(o.q.trim());
+  let cards = Object.values(by).map(c => {
+    const m = S.meta[c.id], st = setInfo(c.setId);
+    return { ...c, first: isFinite(c.first) ? c.first : 0, setDate: st?.releaseDate || '', setName: c.setName || setName(c.setId), num: LOGIC.localNum(c), dex: m?.d?.[0] || null, tier: m?.r ? LOGIC.rarityTier(m.r) : null, type: m?.t?.[0] || '' };
+  }).filter(c => (!o.dup || c.qty > 1) && (!q || LOGIC.norm(c.name + ' ' + c.setName).includes(q)));
+  const total = cards.reduce((a, c) => a + c.qty, 0), value = cards.reduce((a, c) => a + (c.value || 0), 0);
+  const groups = LOGIC.sortColl(cards, o.sort);
+  const label = c => o.sort === 'value' || o.sort === 'cheap' ? (c.value != null ? eur(c.value) : '–') : o.sort === 'dex' ? (c.dex ? '#' + c.dex : c.name) : o.sort.startsWith('set') ? c.localId : c.name;
+  let shown = 0;
+  const body = groups.map(g => {
+    if (shown >= o.limit) return '';
+    const cs = g.cards.slice(0, o.limit - shown); shown += cs.length;
+    return `${g.title ? `<h2>${esc(g.title)} <span class="muted small">${g.cards.length}</span></h2>` : ''}<div class="grid g-${o.size}">${cs.map(c => `
+      <button class="cell" data-id="${esc(c.id)}">
+        ${imgOf(c) ? `<img src="${esc(imgOf(c))}" loading="lazy" alt="${esc(c.name)}">` : `<span class="noimg">${esc(c.name)}</span>`}
+        ${c.qty > 1 ? `<b class="qtyb">×${c.qty}</b>` : ''}${c.vars.has('reverse') || c.vars.has('holo') ? `<i class="varb">${c.vars.has('holo') ? '✨' : '🔁'}</i>` : ''}
+        <small>${esc(label(c))}</small></button>`).join('')}</div>`;
+  }).join('');
+  el.innerHTML = `<button class="ghost" id="back">← Extensions</button><h1>🗂️ Toute ma collection</h1>
+    <p class="muted">${cards.length} carte(s) différente(s) · ${total} au total · ${eur(value)}</p>
+    <input id="all-q" type="search" placeholder="Chercher (nom, extension…)" value="${esc(o.q)}" autocomplete="off">
+    <div class="row filters">
+      <select id="all-sort">${Object.entries(LOGIC.COLL_SORTS).map(([k, l]) => `<option value="${k}" ${o.sort === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <select id="all-lang"><option value="*" ${o.lang === '*' ? 'selected' : ''}>🌐 Toutes</option>${Object.keys(LANGS).map(k => `<option value="${k}" ${o.lang === k ? 'selected' : ''}>${FLAG[k]}</option>`).join('')}</select>
+      <select id="all-v"><option value="">Toutes versions</option>${Object.entries(VARIANTS).map(([k, l]) => `<option value="${k}" ${o.v === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    </div>
+    <div class="row filters"><button class="chip ${o.dup ? 'on' : ''}" id="all-dup">Doubles seulement</button><span class="grow"></span>
+      ${['s', 'm', 'l'].map(k => `<button class="chip ${o.size === k ? 'on' : ''}" data-sz="${k}">${{ s: '▪▪▪▪', m: '▪▪▪', l: '▪▪' }[k]}</button>`).join('')}</div>
+    ${cards.length ? body : '<p class="muted">Aucune carte.</p>'}
+    ${cards.length > shown ? `<button class="ghost" id="all-more">Voir plus (${cards.length - shown} de plus)</button>` : ''}`;
+  $('#back').onclick = backToList;
+  const redo = () => { const y = scrollY; openAll(); scrollTo(0, y); };
+  $('#all-q').oninput = e => { o.q = e.target.value; o.limit = 300; const pos = e.target.selectionStart; openAll(); const i = $('#all-q'); i.focus(); i.setSelectionRange(pos, pos); };
+  $('#all-sort').onchange = e => { o.sort = e.target.value; o.limit = 300; openAll(); };
+  $('#all-lang').onchange = e => { o.lang = e.target.value; openAll(); };
+  $('#all-v').onchange = e => { o.v = e.target.value; openAll(); };
+  $('#all-dup').onclick = () => { o.dup = !o.dup; openAll(); };
+  $$('[data-sz]').forEach(b => b.onclick = () => { o.size = b.dataset.sz; redo(); });
+  $('#all-more') && ($('#all-more').onclick = () => { o.limit += 300; redo(); });
+  $$('#view-coll .cell').forEach(b => b.onclick = () => { const c = by[b.dataset.id]; openCard({ id: c.id, localId: c.localId, name: c.name, image: c.image, photo: c.photo, setId: c.setId, setName: c.setName }, redo); });
 }
 
 // ---------- étiquette : toutes les cartes qui la portent ----------

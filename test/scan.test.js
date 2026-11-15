@@ -63,4 +63,20 @@ lc = V.linesInCard([at('Pikachu', .5, .92, .9, .97), at('025/165', .8, .03, .95,
 assert.ok(lc.flipped); assert.deepStrictEqual(lc.read.num, { num: 25, tot: 165 }); assert.deepStrictEqual(lc.read.names, ['Pikachu']);
 const [u, v] = V.quadMap([{ x: 10, y: 0 }, { x: 20, y: 10 }, { x: 10, y: 20 }, { x: 0, y: 10 }])(10, 10);
 assert.ok(Math.abs(u - .5) < 1e-9 && Math.abs(v - .5) < 1e-9);
+// grille de la collection
+const cc = [
+  { name: 'Pikachu', value: 2, qty: 1, first: 1, last: 5, setDate: '2023-09-22', setName: '151', num: 25, dex: 25, tier: 0, type: 'Électrique' },
+  { name: 'Dracaufeu', value: 300, qty: 2, first: 3, last: 3, setDate: '1999-01-09', setName: 'Set de Base', num: 4, dex: 6, tier: 3, type: 'Feu' },
+  { name: 'Professeur', value: null, qty: 3, first: 2, last: 9, setDate: '2023-09-22', setName: '151', num: 166, dex: null, tier: 1, type: '' },
+];
+const order = (s) => L.sortColl(cc, s).flatMap(g => g.cards.map(c => c.name)).join(',');
+assert.strictEqual(order('recent'), 'Professeur,Pikachu,Dracaufeu');
+assert.strictEqual(order('value'), 'Dracaufeu,Pikachu,Professeur');
+assert.strictEqual(order('cheap'), 'Pikachu,Dracaufeu,Professeur');
+assert.strictEqual(order('set'), 'Dracaufeu,Pikachu,Professeur');
+assert.deepStrictEqual(L.sortColl(cc, 'set').map(g => g.title), ['Set de Base', '151']);
+assert.strictEqual(order('dex'), 'Dracaufeu,Pikachu,Professeur');
+assert.strictEqual(order('rarity'), 'Dracaufeu,Professeur,Pikachu');
+assert.strictEqual(order('qty'), 'Professeur,Dracaufeu,Pikachu');
+assert.strictEqual(L.sortColl(cc, 'type').at(-1).title, 'Dresseurs, énergies et autres');
 console.log('OK scan rapide');

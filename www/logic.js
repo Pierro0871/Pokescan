@@ -382,6 +382,32 @@
     return { list: X, sure: sure && X.length > 0, by: [...new Set(by)], nameScore };
   }
 
-  const api = { buildIndex, namesFor, decideText, rankSets, similar, cleanName, bestName, packOdds, deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
+  // ---------- toute ma collection en grille : tri et groupes ----------
+  // cards : [{ name, value, qty, first, last, setDate, setName, num, dex, tier, type }]
+  const COLL_SORTS = {
+    recent: 'Ajoutées récemment', old: 'Ajoutées en premier', value: 'Valeur ↓', cheap: 'Valeur ↑', name: 'Nom A→Z',
+    set: 'Extension (ordre du classeur)', setNew: 'Extension récente d\'abord', dex: 'N° Pokédex', rarity: 'Rareté', type: 'Type', qty: 'Doubles d\'abord',
+  };
+  function sortColl(cards, sort) {
+    const by = (...keys) => [...cards].sort((a, b) => { for (const k of keys) { const x = k(a), y = k(b); if (x < y) return -1; if (x > y) return 1; } return 0; });
+    const nm = c => norm(c.name), byNum = c => c.num ?? 9999, day = t => new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const one = list => [{ title: '', cards: list }];
+    const grp = (list, key) => { const out = []; for (const c of list) { const t = key(c); if (!out.length || out[out.length - 1].title !== t) out.push({ title: t, cards: [] }); out[out.length - 1].cards.push(c); } return out; };
+    switch (sort) {
+      case 'old': return grp(by(c => c.first || 0, nm), c => c.first ? day(c.first) : 'Date inconnue');
+      case 'value': return one(by(c => -(c.value || 0), nm));
+      case 'cheap': return one(by(c => c.value ?? Infinity, nm));
+      case 'name': return grp(by(nm, c => c.setDate || ''), c => (nm(c)[0] || '#').toUpperCase());
+      case 'set': return grp(by(c => c.setDate || '9999', c => c.setName, byNum), c => c.setName);
+      case 'setNew': return grp(by(c => -(Date.parse(c.setDate) || 0), c => c.setName, byNum), c => c.setName);
+      case 'dex': return one(by(c => c.dex || 99999, c => c.setDate || '', byNum));
+      case 'rarity': { const L = ['Communes', 'Peu communes', 'Rares', 'Holo / brillantes', 'Ultra rares', 'Secrètes / spéciales']; return grp(by(c => -(c.tier ?? -1), nm), c => L[c.tier] || 'Rareté inconnue'); }
+      case 'type': return grp(by(c => c.type ? norm(c.type) : '~', c => c.dex || 99999, nm), c => c.type || 'Dresseurs, énergies et autres');
+      case 'qty': return one(by(c => -c.qty, nm));
+      default: return grp(by(c => -(c.last || 0), nm), c => c.last ? day(c.last) : 'Date inconnue'); // recent
+    }
+  }
+
+  const api = { COLL_SORTS, sortColl, buildIndex, namesFor, decideText, rankSets, similar, cleanName, bestName, packOdds, deckCheck, kind, isBasicEnergy, encodeIds, decodeIds, trades, norm, year, total, progress, filterSets, groupSets, parseQuick, localNum, priceChange, setValue, diffColl, rarityTier, drawBooster, achievements };
   if (typeof module !== 'undefined') module.exports = api; else root.LOGIC = api;
 })(this);
