@@ -8,6 +8,7 @@ function show(v) {
   if (v === 'scan') { startCam(); renderSession(); } else stopCam();
   if (v !== 'boost') stopQR();
   if (v === 'coll') renderColl();
+  if (v === 'mine') openAll();
   if (v === 'poke') renderPoke();
   if (v === 'boost') renderBoost();
   if (v === 'stats') renderStats();
@@ -37,7 +38,6 @@ function renderColl() {
     </div>
     <div class="row">${[['', 'Toutes'], ['started', 'Commencées'], ['done', 'Complètes'], ['none', 'Pas commencées'], ['scan', 'Scan activé']].map(([k, l]) => `<button class="chip ${f.state === k ? 'on' : ''}" data-st="${k}">${l}</button>`).join('')}</div>
     ${allTags().length ? `<div class="row tagrow"><span class="muted small">🏷️</span>${allTags().map(t => `<button class="chip tag" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
-    <button class="setrow" id="allgrid"><span class="sym">🗂️</span><span class="grow"><b>Toute ma collection</b><br><span class="muted small">Toutes tes cartes en grille, triées comme tu veux</span></span><span class="count">${new Set(S.coll.filter(e => langOf(e) === S.lang).map(e => e.cardId)).size}</span></button>
     <button class="setrow" id="review"><span class="sym">🧐</span><span class="grow"><b>Passer en revue ma collection</b><br><span class="muted small">Carte par carte en 3D, plein écran : choisis l'état de chacune</span></span></button>
     <button class="setrow" id="wanted"><span class="sym">🔎</span><span class="grow"><b>Cartes à trouver</b><br><span class="muted small">Ce qui te manque dans tes extensions commencées, par prix</span></span></button>
     <button class="setrow" id="perso"><span class="sym">✍️</span><span class="grow"><b>Mes cartes perso</b><br><span class="muted small">Cartes absentes de la base, ajoutées à la main</span></span><span class="count">${persoN}</span></button>
@@ -74,7 +74,6 @@ function renderColl() {
   $('#perso').onclick = openPerso;
   $('#wanted').onclick = () => openWanted();
   $('#review').onclick = () => openReview();
-  $('#allgrid').onclick = () => openAll();
   el.querySelector('.langsel').onchange = e => switchLang(e.target.value);
   $$('[data-tag]').forEach(b => b.onclick = () => openTag(b.dataset.tag));
   $('#refresh-cat').onclick = () => loadCatalog().then(() => toast('Liste à jour')).catch(err => toast('Erreur : ' + esc(err.message)));
@@ -308,9 +307,10 @@ async function checkNewSets() {
 }
 
 // ---------- toute ma collection en grille ----------
+// onglet « Mes cartes »
 function openAll() {
-  const el = $('#view-coll'), o = S.allOpt ||= { sort: 'recent', q: '', lang: S.lang, v: '', dup: false, size: 'm', limit: 300 };
-  S.redrawColl = openAll;
+  const el = $('#view-mine'), o = S.allOpt ||= { sort: 'recent', q: '', lang: S.lang, v: '', dup: false, size: 'm', limit: 300 };
+  if (S.view !== 'mine') return show('mine');
   const by = {};
   for (const e of S.coll) {
     if (o.lang !== '*' && langOf(e) !== o.lang) continue;
@@ -341,7 +341,7 @@ function openAll() {
         ${c.qty > 1 ? `<b class="qtyb">×${c.qty}</b>` : ''}${c.vars.has('reverse') || c.vars.has('holo') ? `<i class="varb">${c.vars.has('holo') ? '✨' : '🔁'}</i>` : ''}
         <small>${esc(label(c))}</small></button>`).join('')}</div>`;
   }).join('');
-  el.innerHTML = `<button class="ghost" id="back">← Extensions</button><h1>🗂️ Toute ma collection</h1>
+  el.innerHTML = `<h1>🃏 Mes cartes</h1>
     <p class="muted">${cards.length} carte(s) différente(s) · ${total} au total · ${eur(value)}</p>
     <input id="all-q" type="search" placeholder="Chercher (nom, extension…)" value="${esc(o.q)}" autocomplete="off">
     <div class="row filters">
@@ -353,7 +353,6 @@ function openAll() {
       ${['s', 'm', 'l'].map(k => `<button class="chip ${o.size === k ? 'on' : ''}" data-sz="${k}">${{ s: '▪▪▪▪', m: '▪▪▪', l: '▪▪' }[k]}</button>`).join('')}</div>
     ${cards.length ? body : '<p class="muted">Aucune carte.</p>'}
     ${cards.length > shown ? `<button class="ghost" id="all-more">Voir plus (${cards.length - shown} de plus)</button>` : ''}`;
-  $('#back').onclick = backToList;
   const redo = () => { const y = scrollY; openAll(); scrollTo(0, y); };
   $('#all-q').oninput = e => { o.q = e.target.value; o.limit = 300; const pos = e.target.selectionStart; openAll(); const i = $('#all-q'); i.focus(); i.setSelectionRange(pos, pos); };
   $('#all-sort').onchange = e => { o.sort = e.target.value; o.limit = 300; openAll(); };
@@ -362,7 +361,7 @@ function openAll() {
   $('#all-dup').onclick = () => { o.dup = !o.dup; openAll(); };
   $$('[data-sz]').forEach(b => b.onclick = () => { o.size = b.dataset.sz; redo(); });
   $('#all-more') && ($('#all-more').onclick = () => { o.limit += 300; redo(); });
-  $$('#view-coll .cell').forEach(b => b.onclick = () => { const c = by[b.dataset.id]; openCard({ id: c.id, localId: c.localId, name: c.name, image: c.image, photo: c.photo, setId: c.setId, setName: c.setName }, redo); });
+  $$('#view-mine .cell').forEach(b => b.onclick = () => { const c = by[b.dataset.id]; openCard({ id: c.id, localId: c.localId, name: c.name, image: c.image, photo: c.photo, setId: c.setId, setName: c.setName }, redo); });
 }
 
 // ---------- étiquette : toutes les cartes qui la portent ----------

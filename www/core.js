@@ -144,6 +144,7 @@ function updateUndoUI() { $('#undo').disabled = !undo.length; $('#redo').disable
 function rerender() {
   if (!$('#sheet').hidden && S.sheetCard) renderCard(S.sheetCard);
   if (S.view === 'coll') S.redrawColl?.();
+  if (S.view === 'mine') { const y = scrollY; openAll(); scrollTo(0, y); }
   if (S.view === 'stats') renderStats();
   if (S.view === 'scan') renderSession();
 }
