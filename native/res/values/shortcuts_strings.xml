@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sc_scan">Scanner</string>
+    <string name="sc_scan_long">Scanner une carte</string>
+    <string name="sc_batch">Scan en lot</string>
+    <string name="sc_flat">Cartes à plat</string>
+    <string name="sc_coll">Collection</string>
+</resources>

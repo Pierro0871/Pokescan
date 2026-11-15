@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="scan" android:enabled="true" android:icon="@drawable/sc_scan" android:shortcutShortLabel="@string/sc_scan" android:shortcutLongLabel="@string/sc_scan_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="fr.pierrick.pokescan" android:targetClass="fr.pierrick.pokescan.MainActivity">
+            <extra android:name="view" android:value="scan" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="batch" android:enabled="true" android:icon="@drawable/sc_batch" android:shortcutShortLabel="@string/sc_batch" android:shortcutLongLabel="@string/sc_batch">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="fr.pierrick.pokescan" android:targetClass="fr.pierrick.pokescan.MainActivity">
+            <extra android:name="view" android:value="batch" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="flat" android:enabled="true" android:icon="@drawable/sc_flat" android:shortcutShortLabel="@string/sc_flat" android:shortcutLongLabel="@string/sc_flat">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="fr.pierrick.pokescan" android:targetClass="fr.pierrick.pokescan.MainActivity">
+            <extra android:name="view" android:value="flat" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="coll" android:enabled="true" android:icon="@drawable/sc_coll" android:shortcutShortLabel="@string/sc_coll" android:shortcutLongLabel="@string/sc_coll">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="fr.pierrick.pokescan" android:targetClass="fr.pierrick.pokescan.MainActivity">
+            <extra android:name="view" android:value="coll" />
+        </intent>
+    </shortcut>
+</shortcuts>

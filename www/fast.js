@@ -7,7 +7,7 @@ const FS = { ok: false, on: false, ix: null, mini: null, engine: 'auto', v: null
 const INDEX_URL = `https://github.com/${'Pierro0871/Pokescan'}/releases/download/index/`;
 const INDEX_FILES = ['meta.json.gz', 'emb.bin', 'model.tflite'];
 const nsCall = (m, o = {}) => Capacitor.nativePromise('NativeScan', m, o);
-const fsActive = () => FS.ok && FS.engine !== 'web' && (A.mode === 'one' || A.mode === 'batch');
+const fsActive = () => FS.ok && FS.engine !== 'web' && (A.mode === 'one' || A.mode === 'batch' || A.mode === 'flat');
 
 async function fsInit() {
   if (!NATIVE) return;
@@ -155,7 +155,7 @@ function fsFrame(ev) {
   if (!FS.on || S.view !== 'scan' || !ev) return;
   FS.last = ev;
   if (ev.error) { DIAG.err = ev.error; return renderDiag(); }
-  if (A.paused || A.flyUntil > Date.now() || !$('#sheet').hidden) return;
+  if (A.paused || A.mode === 'flat' || A.flyUntil > Date.now() || !$('#sheet').hidden) return;
   const r = VISION.readLines(ev.lines);
   FS.read = r;
   const ix = FS.ix || fsMini();
@@ -199,4 +199,36 @@ function fsDiag() {
     <span>Texte brut : <span class="muted">${esc((ev.lines || []).map(l => l.t).join(' | ').slice(0, 160))}</span></span>
     <span>Décision : ${d ? `${d.sure ? '<span class="up">sûr</span>' : 'pas sûr'} par ${esc(d.by.join(' + ') || '–')} · ${d.list.slice(0, 3).map(x => `${esc(ix.cards[x.i].name)} ${esc(ix.cards[x.i].localId)} (${esc(ix.sets[ix.cards[x.i].set].id)}) <b>${x.s.toFixed(2)}</b>`).join(' · ')}` : '–'} · votes ${votesFor(A.votes?.at(-1))}/4</span>
     ${ev.ids ? `<span>Image seule : ${ev.ids.slice(0, 3).map((i, k) => `${esc(FS.ix?.cards[i]?.name || i)} ${ev.sc[k]}`).join(' · ')}</span>` : ''}`;
+}
+
+// ---------- cartes à plat : une photo, toutes les cartes posées sur la table ----------
+async function scanFlat() {
+  if (!FS.on) return scanPage(); // moteur classique : même analyse que la page de classeur
+  const cv = cvReady(), box = $('#matches');
+  if (!cv) return toast('Détection des cartes pas encore prête, réessaie dans 2 secondes');
+  const ix = FS.ix || fsMini();
+  if (!ix) return toast('Télécharge d\'abord la base du scan rapide');
+  box.innerHTML = '<p class="muted">📸 Photo et lecture des cartes…</p>';
+  feedback('found');
+  let snap;
+  try { snap = await nsCall('snapshot'); } catch (err) { box.innerHTML = ''; return toast('Photo impossible : ' + esc(err.message)); }
+  const src = 'data:image/jpeg;base64,' + snap.jpeg, im = await getImage(src);
+  const sw = 640, sh = Math.round(640 * snap.h / snap.w), px = grab(im, 0, 0, im.width, im.height, sw, sh);
+  const found = VISION.findCards(cv, px, sw, sh, 0.015);
+  const shot = quads => `<div class="flatshot"><img src="${src}" alt=""><svg viewBox="0 0 1 1" preserveAspectRatio="none">${quads.map(q => `<polygon points="${q.map(p => `${p.x},${p.y}`).join(' ')}"/>`).join('')}</svg>${quads.map((q, i) => `<b style="left:${(q.reduce((a, p) => a + p.x, 0) / 4 * 100).toFixed(1)}%;top:${(q.reduce((a, p) => a + p.y, 0) / 4 * 100).toFixed(1)}%">${i + 1}</b>`).join('')}</div>`;
+  if (!found.length) { box.innerHTML = shot([]) + '<p class="muted">Aucune carte trouvée : pose les cartes sur un fond uni et sombre, sans qu\'elles se touchent, et recule un peu.</p>'; return; }
+  const quads = found.map(f => VISION.orderCorners(f.q).map(p => ({ x: p.x / sw, y: p.y / sh })));
+  // coordonnées des lignes : relatives à la photo, comme les coins des cartes
+  const items = [];
+  let missed = 0;
+  quads.forEach((q, n) => {
+    const { read } = VISION.linesInCard(snap.lines, q);
+    const d = LOGIC.decideText(read, ix, {});
+    if (!d.list.length) { missed++; return; }
+    const num = read.num ? (read.num.promo ? read.num.promo + ' ' + read.num.num : read.num.num + '/' + read.num.tot) : '';
+    items.push({ n: n + 1, list: d.list.map(x => ({ card: fsCard(ix, x.i), d: 1 - x.s })), pick: 0, on: true, sure: d.sure, why: [read.names[0], num].filter(Boolean).join(' · ') });
+  });
+  const head = shot(quads) + (missed ? `<p class="small muted">${missed} carte(s) illisible(s) : rapproche-toi ou ajoute-les avec le scan 1 carte.</p>` : '');
+  if (!items.length) { box.innerHTML = head; return; }
+  renderPageItems(items, head);
 }

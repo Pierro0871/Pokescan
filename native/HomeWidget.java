@@ -27,4 +27,13 @@ public class HomeWidget extends Plugin {
         ctx.sendBroadcast(i);
         call.resolve();
     }
+
+    // Raccourci qui a lancé l'appli (une seule fois)
+    @PluginMethod
+    public void pending(PluginCall call) {
+        com.getcapacitor.JSObject r = new com.getcapacitor.JSObject();
+        r.put("view", MainActivity.pendingView);
+        MainActivity.pendingView = null;
+        call.resolve(r);
+    }
 }

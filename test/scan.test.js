@@ -54,4 +54,13 @@ assert.deepStrictEqual(id(d).sort(), ['sv03.5-025', 'sv03.5-173']);
 // lignes natives -> lecture
 const r = V.readLines([{ t: 'DRESSEUR', x: .05, y: .02, w: .2, h: .03 }, { t: 'Pikachu V', x: .1, y: .05, w: .3, h: .05 }, { t: 'PV190', x: .7, y: .05, w: .2, h: .04 }, { t: 'SWSH050', x: .05, y: .94, w: .15, h: .02 }]);
 assert.deepStrictEqual(r.names, ['Pikachu V']); assert.deepStrictEqual(r.num, { num: 50, promo: 'SWSH' });
+// cartes à plat : texte de la photo ramené dans chaque carte (même retournée)
+const q = [{ x: .1, y: .1 }, { x: .4, y: .1 }, { x: .4, y: .5 }, { x: .1, y: .5 }];
+const at = (t, u0, v0, u1, v1) => ({ t, q: [.1 + u0 * .3, .1 + v0 * .4, .1 + u1 * .3, .1 + v0 * .4, .1 + u1 * .3, .1 + v1 * .4, .1 + u0 * .3, .1 + v1 * .4] });
+let lc = V.linesInCard([at('Pikachu', .1, .03, .5, .08), at('025/165', .05, .94, .2, .97), at('Autre carte', .1, 1.3, .5, 1.4)], q);
+assert.deepStrictEqual(lc.read.names, ['Pikachu']); assert.deepStrictEqual(lc.read.num, { num: 25, tot: 165 }); assert.strictEqual(lc.lines.length, 2);
+lc = V.linesInCard([at('Pikachu', .5, .92, .9, .97), at('025/165', .8, .03, .95, .06)], q); // carte posée à l'envers
+assert.ok(lc.flipped); assert.deepStrictEqual(lc.read.num, { num: 25, tot: 165 }); assert.deepStrictEqual(lc.read.names, ['Pikachu']);
+const [u, v] = V.quadMap([{ x: 10, y: 0 }, { x: 20, y: 10 }, { x: 10, y: 20 }, { x: 0, y: 10 }])(10, 10);
+assert.ok(Math.abs(u - .5) < 1e-9 && Math.abs(v - .5) < 1e-9);
 console.log('OK scan rapide');

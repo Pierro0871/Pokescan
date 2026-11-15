@@ -632,7 +632,7 @@ function histHTML() {
   return items.map(h => {
     const d = new Date(h.t).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }), head = d !== day ? `<h3>${d}</h3>` : '';
     day = d;
-    return head + `<button class="line" data-id="${esc(h.cardId)}"><span class="grow">${esc(h.name)} <span class="muted">${esc(h.setName)} ${esc(h.localId)}</span></span><b class="${h.d > 0 ? 'up' : 'down'}">${h.d > 0 ? '+' : ''}${h.d}</b></button>`;
+    return head + `<button class="line" data-id="${esc(h.cardId)}"><span class="grow">${esc(h.name)} <span class="muted">${esc(h.setName)} ${esc(h.localId)}</span></span><span class="muted small">${hhmm(h.t)}</span> <b class="${h.d > 0 ? 'up' : 'down'}">${h.d > 0 ? '+' : ''}${h.d}</b></button>`;
   }).join('') + (S.hist.length > n ? '<button class="ghost" id="hist-more">Voir plus</button>' : '');
 }
 
@@ -753,7 +753,7 @@ async function init() {
   S.coef = { ...FP.DEFAULT_COEF, ...(await g('coef', {})) };
   await loadLang(await g('lang', 'fr'));
   S.meta = await g('meta', {}); S.hist = await g('hist', []); S.valhist = await g('valhist', {});
-  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []); S.cardBack = await g('cardback', null); S.sound = await g('sound', 'bip'); S.accent = await g('accent', 'jaune'); S.richMin = await g('richmin', 20);
+  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []); S.cardBack = await g('cardback', null); S.sound = await g('sound', 'bip'); S.accent = await g('accent', 'jaune'); S.richMin = await g('richmin', 20); S.phist = await g('phist', {});
   applyTheme(); matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
   $$('#tabs button').forEach(b => b.onclick = () => show(b.dataset.view));
   $('#sheet').onclick = e => { if (e.target.id === 'sheet') closeSheet(); };
@@ -763,10 +763,12 @@ async function init() {
   updateUndoUI();
   await fsInit().catch(() => { });
   show('scan');
+  optSummary();
+  if (NATIVE) Capacitor.nativePromise('HomeWidget', 'pending').then(r => r?.view && goShortcut(r.view)).catch(() => { });
   if (!S.catalog) loadCatalog().catch(() => { }); else { loadDates().catch(() => { }); checkNewSets().catch(() => { }); }
   afterChange();
   setTimeout(() => { S.achReady = true; }, 1500); // pas de toast pour les succès déjà acquis au démarrage
-  backfill().catch(() => { });
+  backfill().catch(() => { }).finally(() => setTimeout(() => refreshPrices().catch(() => { }), 5000));
   setTimeout(() => upgradeFps().catch(() => { }), 3000);
   if (NATIVE) checkUpdate(false);
 }

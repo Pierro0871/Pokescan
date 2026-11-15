@@ -47,7 +47,7 @@ async function toggleTorch() {
   try { await A.track.applyConstraints({ advanced: [{ torch: A.torch }] }); } catch { A.torch = false; }
   $('#torch').classList.toggle('on', A.torch);
 }
-function status(t) { $('#cam-msg').textContent = t || (FS.on && FS.ix ? `Pose la carte dans le rectangle · ${FS.ix.cards.length.toLocaleString('fr')} cartes connues` : `Pose la carte dans le rectangle · ${S.fpSets.length} extension(s) activée(s)`); }
+function status(t) { $('#cam-msg').textContent = t || (A.mode === 'flat' ? 'Pose 2 à 6 cartes à plat sur un fond uni, puis « Analyser les cartes »' : FS.on && FS.ix ? `Pose la carte dans le rectangle · ${FS.ix.cards.length.toLocaleString('fr')} cartes connues` : `Pose la carte dans le rectangle · ${S.fpSets.length} extension(s) activée(s)`); }
 
 // Retour : vibration + petit son
 let audio;
@@ -441,7 +441,7 @@ async function cardInfo(c) {
       const d = await withTimeout(getJSON('/cards/' + encodeURIComponent(c.id), FS.ix && FS.ix.sets.find(s => s.id === c.setId)?.enOnly ? 'en' : S.lang), 1500);
       rememberMeta(d);
       if (d.variants) { v = d.variants; VARS.set(c.id, v); }
-      if (d.pricing?.cardmarket) { S.prices[c.id] = d.pricing.cardmarket; kv.set('prices', S.prices); }
+      if (d.pricing?.cardmarket) { setPrice(c.id, d.pricing.cardmarket, true); kv.set('prices', S.prices); }
     } catch { } // hors ligne : toutes les versions sont proposées
   }
   return { variants: v, price: S.prices[c.id] };
@@ -903,7 +903,7 @@ function renderSession() {
   const b = A.booster;
   box.innerHTML = (b ? `<div class="boosterbar"><span class="grow">📦 Booster <b>${esc(setName(b.setId))}</b> en cours · ${b.cards.length} carte(s)</span><button class="primary small" id="b-end">Terminer</button></div>` : '')
     + (A.session.length ? `<details class="session" ${A.sessionOpen ? 'open' : ''}><summary>Session : <b>${A.session.length}</b> carte(s) · ${eur(val)}</summary>
-      ${A.session.map((x, i) => `<div class="line"><img src="${esc(imgOf(x.c))}" alt=""><span class="grow">${esc(x.c.name)} <span class="muted">${esc(x.c.setName)} ${esc(x.c.localId)} · ${VARIANTS[x.variant]}</span></span><button class="ghost small" data-rm="${i}">✕</button></div>`).join('')}
+      ${A.session.map((x, i) => `<div class="line"><img src="${esc(imgOf(x.c))}" alt=""><span class="grow">${esc(x.c.name)} <span class="muted">${esc(x.c.setName)} ${esc(x.c.localId)} · ${VARIANTS[x.variant]} · ${hhmm(x.t)}</span></span><button class="ghost small" data-rm="${i}">✕</button></div>`).join('')}
       <button class="ghost small" id="s-new">Nouvelle session</button></details>` : '');
   box.querySelector('details')?.addEventListener('toggle', e => A.sessionOpen = e.target.open);
   box.querySelectorAll('[data-rm]').forEach(bt => bt.onclick = () => {
@@ -992,11 +992,17 @@ async function scanPage() {
     if (!dec.sure && res[0].d < FP.LOOSE_MAX && DIAG.ocr === 'prête') dec = FP.decide(qs, res, scanCards(), await readNumber(VISION.warp(cv, big, bw, bh, qb, 630, 880), 630, 880), officialOf);
     items.push({ list: dec.list.slice(0, 3), pick: 0, on: dec.list[0].d < FP.LOOSE_MAX, sure: dec.sure });
   }
+  renderPageItems(items, '', () => drawQuads([], r));
+}
+
+// Résultats de plusieurs cartes d'un coup (page de classeur, cartes à plat) : à vérifier puis ajouter
+function renderPageItems(items, head = '', done = () => { }) {
+  const box = $('#matches');
   const render = () => {
-    box.innerHTML = `<p class="muted">${items.length} carte(s) trouvée(s). Touche une image pour changer de proposition, décoche celles à ignorer.</p>`
+    box.innerHTML = head + `<p class="muted">${items.length} carte(s) trouvée(s). Touche une image pour changer de proposition, décoche celles à ignorer.</p>`
       + items.map((it, i) => { const c = it.list[it.pick].card; return `<div class="match pageitem ${it.on ? '' : 'off'}">
-        <button class="pimg" data-i="${i}"><img src="${esc(imgOf(c))}" alt=""></button>
-        <span class="grow"><b>${esc(c.name)}</b><br><span class="muted">${esc(c.setName)} · n° ${esc(c.localId)}${it.sure ? ' · ✓' : ''}</span>${it.list.length > 1 ? `<br><span class="small muted">${it.pick + 1}/${it.list.length}</span>` : ''}</span>
+        ${it.n ? `<span class="pnum">${it.n}</span>` : ''}<button class="pimg" data-i="${i}"><img src="${esc(imgOf(c))}" alt=""></button>
+        <span class="grow"><b>${esc(c.name)}</b><br><span class="muted">${esc(c.setName)} · n° ${esc(c.localId)}${it.sure ? ' · ✓' : ''}</span>${it.list.length > 1 ? `<br><span class="small muted">${it.pick + 1}/${it.list.length}</span>` : ''}${it.why ? `<br><span class="small muted">lu : ${esc(it.why)}</span>` : ''}</span>
         <input type="checkbox" data-c="${i}" ${it.on ? 'checked' : ''}></div>`; }).join('')
       + `<button class="primary big" id="page-add">Ajouter ${items.filter(x => x.on).length} carte(s)</button>`;
     box.querySelectorAll('.pimg').forEach(b => b.onclick = () => { const it = items[+b.dataset.i]; it.pick = (it.pick + 1) % it.list.length; render(); });
@@ -1004,7 +1010,7 @@ async function scanPage() {
     $('#page-add').onclick = () => {
       const sel = items.filter(x => x.on);
       sel.forEach(it => addFromScan(it.list[it.pick].card));
-      feedback('add'); box.innerHTML = ''; drawQuads([], r);
+      feedback('add'); box.innerHTML = ''; done();
       toast(`${sel.length} carte(s) ajoutée(s)`);
     };
   };
@@ -1033,23 +1039,35 @@ async function quickAdd(text) {
   });
 }
 
+// Ce qui est réglé, visible même réglages repliés
+function optSummary() {
+  const el = $('#optsum'); if (!el) return;
+  el.textContent = [{ ask: '❓ version demandée', normal: 'Normales', reverse: 'Reverse', holo: 'Holo' }[A.variant], A.only ? setName(A.only) : '', A.year || '', A.autoVar ? 'reflets auto' : ''].filter(Boolean).join(' · ');
+}
+// Raccourci de l'icône / tuile : scan, lot, à plat, collection
+function goShortcut(v) {
+  if (v === 'coll') return show('coll');
+  if (S.view !== 'scan') show('scan');
+  const m = { scan: 'one', batch: 'batch', flat: 'flat' }[v];
+  if (m && A.mode !== m) $(`[data-mode=${m}]`)?.click();
+}
 function bindScanUI() {
-  $('#btn-scan').onclick = () => { if (A.mode === 'page') return scanPage(); if (!A.res) return toast('Vise une carte d\'abord'); propose(false); };
+  $('#btn-scan').onclick = () => { if (A.mode === 'page') return scanPage(); if (A.mode === 'flat') return scanFlat(); if (!A.res) return toast('Vise une carte d\'abord'); propose(false); };
   $('#torch').onclick = toggleTorch;
-  const setVar = v => { A.variant = v; $$('[data-var]').forEach(x => x.classList.toggle('on', x.dataset.var === v)); };
+  const setVar = v => { A.variant = v; $$('[data-var]').forEach(x => x.classList.toggle('on', x.dataset.var === v)); optSummary(); };
   kv.get('scanvar').then(v => setVar(v || 'ask'));
   $$('[data-var]').forEach(b => b.onclick = () => { setVar(b.dataset.var); kv.set('scanvar', A.variant); });
   $$('[data-mode]').forEach(b => b.onclick = () => {
     A.mode = b.dataset.mode; $$('[data-mode]').forEach(x => x.classList.toggle('on', x === b));
-    $('#cam').classList.toggle('page', A.mode === 'page'); $('#matches').innerHTML = ''; clearProp(); drawQuads([], { x: 0, y: 0 });
-    $('#btn-scan').textContent = A.mode === 'page' ? 'Analyser la page' : 'Choisir manuellement';
-    $('#btn-scan').className = A.mode === 'page' ? 'primary big' : 'ghost big';
+    $('#cam').classList.toggle('page', A.mode === 'page' || A.mode === 'flat'); $('#matches').innerHTML = ''; clearProp(); drawQuads([], { x: 0, y: 0 });
+    $('#btn-scan').textContent = { page: '📖 Analyser la page', flat: '🃏 Analyser les cartes' }[A.mode] || '✋ Choisir manuellement';
+    $('#btn-scan').className = A.mode === 'page' || A.mode === 'flat' ? 'primary big' : 'ghost';
     $('#cam').classList.toggle('graded', A.mode === 'graded'); A.grade = null; A.hold = null;
     if (A.mode === 'batch') A.batch = { n: 0, v: 0 };
     renderBatch();
     if (S.view === 'scan' && FS.ok && fsActive() !== FS.on) { stopCam(); startCam(); }
     else requestAnimationFrame(fsPlace);
-    A.paused = false; status({ page: 'Cadre toute la page du classeur, puis Analyser', graded: 'Cadre le boîtier entier, étiquette en haut', batch: 'Pose les cartes une par une : chaque carte reconnue s\'ajoute toute seule' }[A.mode] || '');
+    A.paused = false; status({ page: 'Cadre toute la page du classeur, puis Analyser', graded: 'Cadre le boîtier entier, étiquette en haut', flat: 'Pose 2 à 6 cartes à plat, bien éclairées, puis Analyser', batch: 'Pose les cartes une par une : chaque carte reconnue s\'ajoute toute seule' }[A.mode] || '');
   });
   $('#quick-form').onsubmit = e => { e.preventDefault(); quickAdd($('#quick-q').value); };
   $('#retry-scan').onclick = retryScan;
@@ -1071,8 +1089,8 @@ function bindScanUI() {
     } catch { status('Mise au point au toucher non disponible sur ce téléphone'); }
   });
   $('#analyze').onclick = () => { if (FS.on) return A.res ? (A.conf = null, propose(false)) : toast('Vise une carte d\'abord'); A.paused = false; clearProp(); analyzeCard(true); };
-  $('#scan-set').onchange = e => chooseScanSet(e.target.value);
-  $('#scan-year').onchange = e => { A.year = e.target.value; fillScanSets(); retryScan(); status(A.year ? `Recherche limitée à ${A.year}` : ''); };
+  $('#scan-set').onchange = e => { chooseScanSet(e.target.value); setTimeout(optSummary, 50); };
+  $('#scan-year').onchange = e => { A.year = e.target.value; optSummary(); fillScanSets(); retryScan(); status(A.year ? `Recherche limitée à ${A.year}` : ''); };
   kv.get('debug').then(v => { A.debug = !!v; $('#debug').checked = A.debug; $('#diag').hidden = !A.debug; });
   $('#debug').onchange = async e => {
     A.debug = e.target.checked; kv.set('debug', A.debug); $('#diag').hidden = !A.debug;
@@ -1081,7 +1099,7 @@ function bindScanUI() {
     renderDiag();
   };
   kv.get('autovar').then(v => { A.autoVar = !!v; $('#autovar').checked = A.autoVar; });
-  $('#autovar').onchange = e => { A.autoVar = e.target.checked; kv.set('autovar', A.autoVar); };
+  $('#autovar').onchange = e => { A.autoVar = e.target.checked; kv.set('autovar', A.autoVar); optSummary(); };
   $('#scan-lang').onchange = e => switchLang(e.target.value);
   kv.get('autoadd').then(v => { A.auto = !!v; $('#auto').checked = A.auto; });
   $('#auto').onchange = e => { A.auto = e.target.checked; kv.set('autoadd', A.auto); toast(A.auto ? 'Ajout auto : les cartes reconnues avec certitude s\'ajoutent seules' : 'Ajout auto désactivé'); };

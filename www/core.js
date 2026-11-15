@@ -10,6 +10,8 @@ const pct = n => n == null ? '' : (n > 0 ? '+' : '') + Math.round(n * 100) + ' %
 const norm = LOGIC.norm;
 const VARIANTS = { normal: 'Normale', reverse: 'Reverse', holo: 'Holo' };
 const today = () => new Date().toISOString().slice(0, 10);
+const hhmm = t => new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+const dayTime = t => new Date(t).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) + ' à ' + hhmm(t);
 const LANGS = { fr: 'Français', en: 'English', de: 'Deutsch', it: 'Italiano', es: 'Español', pt: 'Português', ja: '日本語' };
 const FLAG = { fr: '🇫🇷', en: '🇬🇧', de: '🇩🇪', it: '🇮🇹', es: '🇪🇸', pt: '🇵🇹', ja: '🇯🇵' };
 // Clé de stockage propre à la langue (le français garde les clés d'origine)
@@ -67,7 +69,7 @@ const S = {
   lang: 'fr', coll: [], prices: {}, coef: { ...FP.DEFAULT_COEF }, catalog: null, fpSets: [], fpCards: [], view: 'scan',
   meta: {},      // cardId -> { r: rareté, t: types, i: illustrateur, d: n° Pokédex }
   hist: [],      // historique des ajouts/retraits
-  valhist: {},   // date -> valeur totale
+  valhist: {}, phist: {},   // date -> valeur totale
   boosters: [],  // ouvertures de vrais boosters
   thumbs: {},    // cardId -> miniature (data URL) des extensions téléchargées
   thumbSets: [], ach: [], theme: 'auto', collF: { q: '', sort: 'serie', state: '', serie: '', year: '' },
@@ -192,6 +194,27 @@ function rememberMeta(d) {
   clearTimeout(rememberMeta.t); rememberMeta.t = setTimeout(() => kv.set('meta', S.meta), 1000);
 }
 
+// Prix reçu de l'API : gardé, et noté dans l'historique (cartes possédées ou ouvertes) pour la courbe
+function setPrice(id, p, force) {
+  if (!p) return;
+  S.prices[id] = p;
+  if (!force && !ownedIds().has(id)) return;
+  const h = S.phist[id] ||= [], d = today(), row = [d, p.trend ?? null, p['trend-holo'] ?? null];
+  if (h.length && h[h.length - 1][0] === d) h[h.length - 1] = row; else h.push(row);
+  if (h.length > 180) h.splice(0, h.length - 180);
+  clearTimeout(setPrice.t); setPrice.t = setTimeout(() => kv.set('phist', S.phist), 1500);
+}
+// Une fois par jour : prix à jour des cartes possédées (la courbe de chaque carte se construit ainsi)
+async function refreshPrices() {
+  if ((await kv.get('pricesDay')) === today()) return;
+  const ids = [...ownedIds()].filter(id => !id.startsWith('perso-')).slice(0, 600);
+  let ok = 0;
+  await pool(ids, 4, async id => {
+    try { const d = await getJSON('/cards/' + encodeURIComponent(id), srcLang(setIdOf({ id, localId: id.split('-').pop() }))); if (d.pricing?.cardmarket) { setPrice(id, d.pricing.cardmarket); ok++; } } catch { }
+  });
+  if (ok) { kv.set('prices', S.prices); kv.set('pricesDay', today()); afterChange(); rerender(); }
+}
+
 // Complète en fond raretés/types/illustrateurs et prix des cartes possédées (une fois en ligne)
 async function backfill() {
   const ids = [...ownedIds()].filter(id => !id.startsWith('perso-') && (!S.meta[id] || !S.prices[id])).slice(0, 300);
@@ -201,7 +224,7 @@ async function backfill() {
     try {
       const d = await getJSON('/cards/' + encodeURIComponent(id));
       rememberMeta(d);
-      if (d.pricing?.cardmarket) S.prices[id] = d.pricing.cardmarket;
+      setPrice(id, d.pricing?.cardmarket);
       ok++;
     } catch { }
   });
@@ -278,7 +301,7 @@ async function downloadSet(set, onProg) {
       const d = await getJSON('/cards/' + encodeURIComponent(c.id), srcLang(set.id));
       card.variants = d.variants; card.rarity = d.rarity;
       rememberMeta(d);
-      if (d.pricing?.cardmarket) S.prices[c.id] = d.pricing.cardmarket;
+      setPrice(c.id, d.pricing?.cardmarket);
     } catch { }
     if (!c.image) { // image FR absente (ex. promos récentes) : même illustration en anglais
       if (S.lang !== 'en') try { card.image = (await getJSON('/cards/' + encodeURIComponent(c.id), 'en')).image; } catch { }
@@ -378,7 +401,7 @@ const langSelect = () => `<select class="langsel" aria-label="Langue des cartes"
 
 // ---------- fiche carte ----------
 async function openCard(c, onClose) {
-  S.sheetClose = onClose;
+  S.sheetClose = onClose; S.pchartVar = null;
   c.setId ||= setIdOf(c); c.setName ||= setName(c.setId);
   renderCard(c);
   if (c.id.startsWith('perso-')) return;
@@ -386,7 +409,7 @@ async function openCard(c, onClose) {
     const d = await getJSON('/cards/' + encodeURIComponent(c.id), srcLang(c.setId));
     c.variants = d.variants; c.rarity = d.rarity; c.illustrator = d.illustrator; c.name = d.name || c.name; c.image ||= d.image;
     rememberMeta(d);
-    if (d.pricing?.cardmarket) { S.prices[c.id] = d.pricing.cardmarket; kv.set('prices', S.prices); }
+    if (d.pricing?.cardmarket) { setPrice(c.id, d.pricing.cardmarket, true); kv.set('prices', S.prices); }
     if (!$('#sheet').hidden && S.sheetCard === c) renderCard(c);
   } catch { }
 }
@@ -406,6 +429,7 @@ function renderCard(c) {
       : `<table class="prices"><tr><th></th><th>Tendance</th><th>Moyen</th></tr>${line('normal')}${p && p['trend-holo'] != null ? line('reverse') : ''}</table>
       <p class="muted small">Cardmarket, Near Mint${p?.updated ? ' · ' + new Date(p.updated).toLocaleDateString('fr-FR') : ''}${p ? '' : ' · pas de prix connu'}${ch != null ? ` · <span class="${ch >= 0 ? 'up' : 'down'}">${pct(ch)} sur 7 j</span>` : ''}</p>
       <button class="ghost small" id="cm">Voir sur Cardmarket ↗</button>`}
+      ${perso ? '' : priceChart(c.id, S.pchartVar || (entries.some(e => e.variant === 'reverse') ? 'reverse' : 'normal'))}
       ${oddsHTML(c)}
       <div class="row"><button class="ghost small" id="v3d">🔮 Vue 3D</button>${!perso && m?.d?.length ? '<button class="ghost small" id="allof">📚 Toutes ses cartes</button>' : ''}</div></div>
     </div>
@@ -432,10 +456,12 @@ function renderCard(c) {
         </div>
         <div class="row small"><input data-k="tags" list="tag-list" value="${esc((e.tags || []).join(', '))}" placeholder="Étiquettes : deck, cadeau, préférée…" class="grow"></div>
       </div>`).join('') || '<p class="muted">Pas encore dans ta collection.</p>'}
+    ${scansHTML(c.id)}
     <datalist id="tag-list">${allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
     <div class="row"><button class="primary" id="add">+ Ajouter un exemplaire</button><button class="ghost" id="close">Fermer</button></div>`;
   $('#sheet').hidden = false;
   $('#v3d').onclick = () => open3D(c);
+  $$('[data-pv]').forEach(b => b.onclick = () => { S.pchartVar = b.dataset.pv; renderCard(c); });
   $('#allof') && ($('#allof').onclick = async () => {
     const no = m.d[0], names = await dexNames(); closeSheet(); openPokemon(names[no - 1] || c.name, no);
   });
@@ -469,6 +495,41 @@ function renderCard(c) {
       S.coll = S.coll.filter(x => x.qty > 0); save(); renderCard(c);
     });
   });
+}
+
+// Courbe de prix : historique noté par l'appli (1 point par jour), complété au début par les moyennes Cardmarket 30 j / 7 j / 1 j
+function pricePoints(id, variant = 'normal') {
+  const p = S.prices[id], h = (S.phist[id] || []).map(([d, n, r]) => [Date.parse(d), variant === 'reverse' ? r ?? n : n]).filter(x => x[1] != null);
+  const pts = [...h];
+  if (p && pts.length < 4) {
+    const now = Date.now(), DAY = 864e5, rev = variant === 'reverse';
+    const est = [[30, rev ? p['avg30-holo'] ?? p.avg30 : p.avg30], [7, rev ? p['avg7-holo'] ?? p.avg7 : p.avg7], [1, rev ? p['avg1-holo'] ?? p.avg1 : p.avg1]]
+      .filter(([, v]) => v != null).map(([d, v]) => [now - d * DAY, v, true]);
+    const first = pts.length ? pts[0][0] : now;
+    pts.unshift(...est.filter(x => x[0] < first - DAY / 2));
+    if (!h.length) { const t = rev ? p['trend-holo'] ?? p.trend : p.trend; if (t != null) pts.push([now, t]); }
+  }
+  return pts.sort((a, b) => a[0] - b[0]);
+}
+function priceChart(id, variant = 'normal') {
+  const pts = pricePoints(id, variant), hasRev = S.prices[id]?.['trend-holo'] != null;
+  const tabs = hasRev ? `<span class="grow"></span><button class="chip small ${variant === 'normal' ? 'on' : ''}" data-pv="normal">Normale</button><button class="chip small ${variant === 'reverse' ? 'on' : ''}" data-pv="reverse">Reverse</button>` : '';
+  if (pts.length < 2) return `<div id="pchart"><p class="muted small">📈 La courbe du prix se construira jour après jour.</p></div>`;
+  const W = 300, H = 90, t0 = pts[0][0], t1 = pts[pts.length - 1][0], vals = pts.map(p => p[1]), min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
+  const xy = pts.map(([t, v]) => [(t - t0) / (t1 - t0 || 1) * W, H - 8 - (v - min) / span * (H - 16)]);
+  const d = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('');
+  const ch = (vals[vals.length - 1] - vals[0]) / (vals[0] || 1);
+  const dots = xy.map(([x, y], i) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" class="${pts[i][2] ? 'est' : 'pt'}"/>`).join('');
+  return `<div id="pchart" class="pchart"><div class="row small"><b>📈 Prix ${variant === 'reverse' ? 'reverse' : ''}</b><span class="${ch >= 0 ? 'up' : 'down'}">&nbsp;${ch >= 0 ? '+' : ''}${Math.round(ch * 100)} %</span>${tabs}</div>
+    <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${d} L${W},${H} L0,${H} Z" class="area"/><path d="${d}" class="stroke"/>${dots}</svg>
+    <div class="row small muted"><span>${new Date(t0).toLocaleDateString('fr-FR')} · ${eur(vals[0])}</span><span class="grow"></span><span>min ${eur(min)} · max ${eur(max)}</span><span class="grow"></span><span>${eur(vals[vals.length - 1])}</span></div>
+    ${pts.some(p => p[2]) ? '<p class="muted small">Points clairs : moyennes Cardmarket sur 30 j, 7 j et 1 j ; ensuite un point par jour.</p>' : ''}</div>`;
+}
+// Quand la carte a été scannée / ajoutée (jour et heure)
+function scansHTML(id) {
+  const h = S.hist.filter(x => x.cardId === id).slice(-12).reverse();
+  if (!h.length) return '';
+  return `<h2>🕒 Scans et ajouts</h2><div class="scans">${h.map(x => `<div class="row small"><span class="grow">${dayTime(x.t)}</span><b class="${x.d > 0 ? 'up' : 'down'}">${x.d > 0 ? '+' : ''}${x.d}</b></div>`).join('')}</div>`;
 }
 
 // Chance de tirer la carte dans un booster (extension téléchargée : raretés connues)

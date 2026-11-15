@@ -11,12 +11,9 @@
 <div id="newset" hidden></div>
 <main>
   <section id="view-scan" class="view">
-    <div class="row seg" role="group" aria-label="Mode de scan">
-      <button class="chip on" data-mode="one">1 carte</button><button class="chip" data-mode="page">Page</button><button class="chip" data-mode="batch">Lot</button><button class="chip" data-mode="graded">Gradée</button>
-      <span class="grow"></span>
-      <button class="chip on" data-var="ask" title="Demande la version quand il y a un doute">❓ Demander</button><button class="chip" data-var="normal">Normale</button><button class="chip" data-var="reverse">Reverse</button><button class="chip" data-var="holo">Holo</button>
+    <div class="row seg modes" role="group" aria-label="Mode de scan">
+      <button class="chip on" data-mode="one">📷 1 carte</button><button class="chip" data-mode="flat">🃏 À plat</button><button class="chip" data-mode="batch">📦 Lot</button><button class="chip" data-mode="page">📖 Page</button><button class="chip" data-mode="graded">🏷️ Gradée</button>
     </div>
-    <div class="row scanpick"><select id="scan-lang" class="langsel" aria-label="Langue"><option value="fr">🇫🇷</option><option value="en">🇬🇧</option><option value="de">🇩🇪</option><option value="it">🇮🇹</option><option value="es">🇪🇸</option><option value="pt">🇵🇹</option><option value="ja">🇯🇵</option></select><select id="scan-set" aria-label="Extension à scanner" class="grow"></select><select id="scan-year" aria-label="Année"></select></div>
     <div id="fastbar" class="row small" hidden></div>
     <div id="cam">
       <video id="video" playsinline muted></video>
@@ -28,18 +25,26 @@
       <input id="zoom" type="range" hidden aria-label="Zoom">
       <p id="cam-msg"></p>
     </div>
-    <div class="row small autorow">
-      <label><input type="checkbox" id="auto"> Ajout auto</label>
-      <label><input type="checkbox" id="autovar"> Variante auto</label>
-      <label><input type="checkbox" id="debug"> Diagnostic</label>
-      <span class="grow"></span>
+    <div class="row camtools">
       <button class="ghost small" id="analyze">🔍 Analyser</button>
       <button class="ghost small" id="retry-scan">↻ Relancer</button>
+      <span class="grow"></span>
+      <label class="small autochk"><input type="checkbox" id="auto"> Ajout auto</label>
     </div>
+    <details id="scanopts" class="scanopts"><summary><span>⚙️ Réglages du scan</span><span class="muted small grow" id="optsum"></span></summary>
+      <p class="small muted">Version ajoutée</p>
+      <div class="row seg"><button class="chip on" data-var="ask" title="Demande la version quand il y a un doute">❓ Demander</button><button class="chip" data-var="normal">Normale</button><button class="chip" data-var="reverse">Reverse</button><button class="chip" data-var="holo">Holo</button></div>
+      <p class="small muted">Langue, extension et année cherchées</p>
+      <div class="row scanpick"><select id="scan-lang" class="langsel" aria-label="Langue"><option value="fr">🇫🇷</option><option value="en">🇬🇧</option><option value="de">🇩🇪</option><option value="it">🇮🇹</option><option value="es">🇪🇸</option><option value="pt">🇵🇹</option><option value="ja">🇯🇵</option></select><select id="scan-set" aria-label="Extension à scanner" class="grow"></select><select id="scan-year" aria-label="Année"></select></div>
+      <div class="row small autorow">
+        <label><input type="checkbox" id="autovar"> Variante auto (reflets)</label>
+        <label><input type="checkbox" id="debug"> Diagnostic</label>
+      </div>
+    </details>
     <div id="diag" hidden></div>
     <div id="session"></div>
     <div id="matches"></div>
-    <button id="btn-scan" class="ghost big">Choisir manuellement</button>
+    <button id="btn-scan" class="ghost">✋ Choisir manuellement</button>
     <form id="quick-form" class="row">
       <input id="quick-q" placeholder="Ajout rapide : « 045/198 » ou « Nuit Noire 45 »" autocomplete="off">
       <button class="ghost">Ajouter</button>

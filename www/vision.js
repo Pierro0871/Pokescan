@@ -259,6 +259,41 @@
     return { names: top.slice(0, 3).map(l => l.t), num, year: parseYear(bottom), bottom };
   }
 
-  const api = { readLines, typeScores, typeKey, quality, orbFeatures, freeFeatures, orbInliers, symbolScore, sheen, parseYear, parseGrade, findCard, findCards, orderCorners, warp, median, parseNumber };
+  // Position (u, v) dans la carte d'un point de l'image, la carte étant le quadrilatère q (haut-gauche, haut-droit, bas-droit, bas-gauche)
+  function quadMap(q) {
+    const dst = [[0, 0], [1, 0], [1, 1], [0, 1]], M = [], B = [];
+    for (let i = 0; i < 4; i++) {
+      const { x, y } = q[i], [u, v] = dst[i];
+      M.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); B.push(u);
+      M.push([0, 0, 0, x, y, 1, -v * x, -v * y]); B.push(v);
+    }
+    for (let c = 0; c < 8; c++) { // élimination de Gauss
+      let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+      [M[c], M[p]] = [M[p], M[c]]; [B[c], B[p]] = [B[p], B[c]];
+      for (let r = 0; r < 8; r++) if (r !== c) { const f = M[r][c] / M[c][c]; for (let k = c; k < 8; k++) M[r][k] -= f * M[c][k]; B[r] -= f * B[c]; }
+    }
+    const h = B.map((b, i) => b / M[i][i]);
+    return (x, y) => { const w = h[6] * x + h[7] * y + 1; return [(h[0] * x + h[1] * y + h[2]) / w, (h[3] * x + h[4] * y + h[5]) / w]; };
+  }
+  // Lignes de texte de toute la photo (coins q) -> lignes de la carte, dans le sens où elle se lit le mieux
+  function linesInCard(lines, quad) {
+    const f = quadMap(quad), mk = flip => {
+      const out = [];
+      for (const l of lines) {
+        const uv = []; for (let i = 0; i < 8; i += 2) uv.push(f(l.q[i], l.q[i + 1]));
+        let us = uv.map(p => p[0]), vs = uv.map(p => p[1]);
+        if (flip) { us = us.map(u => 1 - u); vs = vs.map(v => 1 - v); }
+        const cu = us.reduce((a, b) => a + b) / 4, cv = vs.reduce((a, b) => a + b) / 4;
+        if (cu < -0.02 || cu > 1.02 || cv < -0.04 || cv > 1.04) continue;
+        out.push({ t: l.t, x: Math.min(...us), y: Math.min(...vs), w: Math.max(...us) - Math.min(...us), h: Math.max(...vs) - Math.min(...vs) });
+      }
+      return out;
+    };
+    const a = mk(false), b = mk(true), ra = readLines(a), rb = readLines(b);
+    const sc = r => (r.num ? 2 : 0) + (r.names.length ? 1 : 0) + (r.year ? 0.5 : 0);
+    return sc(rb) > sc(ra) ? { lines: b, read: rb, flipped: true } : { lines: a, read: ra, flipped: false };
+  }
+
+  const api = { quadMap, linesInCard, readLines, typeScores, typeKey, quality, orbFeatures, freeFeatures, orbInliers, symbolScore, sheen, parseYear, parseGrade, findCard, findCards, orderCorners, warp, median, parseNumber };
   if (typeof module !== 'undefined') module.exports = api; else root.VISION = api;
 })(this);

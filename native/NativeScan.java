@@ -18,6 +18,9 @@ import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.FocusMeteringAction;
 import androidx.camera.core.ImageAnalysis;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
+import android.util.Base64;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.MeteringPoint;
 import androidx.camera.core.Preview;
@@ -67,6 +70,7 @@ public class NativeScan extends Plugin {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private ProcessCameraProvider provider;
     private Camera camera;
+    private ImageCapture capture;
     private FrameLayout box;
     private PreviewView preview;
     private Drawable oldBg;
@@ -199,7 +203,18 @@ public class NativeScan extends Plugin {
                                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888).build();
                         a.setAnalyzer(worker, this::analyze);
                         provider.unbindAll();
-                        camera = provider.bindToLifecycle((LifecycleOwner) getActivity(), CameraSelector.DEFAULT_BACK_CAMERA, p, a);
+                        // photo pleine résolution pour « cartes à plat » ; sans elle si le téléphone ne gère pas les 3 usages
+                        ResolutionSelector hi = new ResolutionSelector.Builder()
+                                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                                .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY).build();
+                        capture = new ImageCapture.Builder().setResolutionSelector(hi).setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build();
+                        try {
+                            camera = provider.bindToLifecycle((LifecycleOwner) getActivity(), CameraSelector.DEFAULT_BACK_CAMERA, p, a, capture);
+                        } catch (Exception ex) {
+                            capture = null;
+                            provider.unbindAll();
+                            camera = provider.bindToLifecycle((LifecycleOwner) getActivity(), CameraSelector.DEFAULT_BACK_CAMERA, p, a);
+                        }
                         JSObject r = new JSObject();
                         r.put("torch", camera.getCameraInfo().hasFlashUnit());
                         Float lo = camera.getCameraInfo().getZoomState().getValue() != null ? camera.getCameraInfo().getZoomState().getValue().getMinZoomRatio() : 1f;
@@ -249,7 +264,7 @@ public class NativeScan extends Plugin {
     public void stop(PluginCall call) {
         getActivity().runOnUiThread(() -> {
             if (provider != null) provider.unbindAll();
-            camera = null;
+            camera = null; capture = null;
             if (box != null) {
                 ViewGroup parent = (ViewGroup) box.getParent();
                 if (parent != null) { parent.removeView(box); parent.setBackground(oldBg); }
@@ -283,8 +298,68 @@ public class NativeScan extends Plugin {
         });
     }
 
+    // ---------- photo de toute la zone caméra : texte lu partout + image réduite (cartes à plat) ----------
+    @PluginMethod
+    public void snapshot(PluginCall call) {
+        if (camera == null || preview == null) { call.reject("caméra arrêtée"); return; }
+        final float vw = Math.max(1, preview.getWidth()), vh = Math.max(1, preview.getHeight());
+        if (capture == null) { snapFromAnalysis = call; snapVw = vw; snapVh = vh; return; }
+        capture.takePicture(worker, new ImageCapture.OnImageCapturedCallback() {
+            @Override public void onCaptureSuccess(ImageProxy img) {
+                Bitmap b; int rot;
+                try { b = img.toBitmap(); rot = img.getImageInfo().getRotationDegrees(); } catch (Exception e) { img.close(); call.reject(e.getMessage()); return; }
+                img.close();
+                snapProcess(call, b, rot, vw, vh);
+            }
+            @Override public void onError(ImageCaptureException e) { snapFromAnalysis = call; snapVw = vw; snapVh = vh; }
+        });
+    }
+    private volatile PluginCall snapFromAnalysis;
+    private volatile float snapVw, snapVh;
+
+    private void snapProcess(PluginCall call, Bitmap full, int rot, float vw, float vh) {
+        try {
+            if (rot != 0) { Matrix m = new Matrix(); m.postRotate(rot); full = Bitmap.createBitmap(full, 0, 0, full.getWidth(), full.getHeight(), m, true); }
+            float bw = full.getWidth(), bh = full.getHeight(), s = Math.max(vw / bw, vh / bh);
+            Rect r = clamp((0 - (vw - bw * s) / 2) / s, (0 - (vh - bh * s) / 2) / s, vw / s, vh / s, full);
+            Bitmap vis = Bitmap.createBitmap(full, r.left, r.top, r.width(), r.height());
+            if (vis.getWidth() > 3000) vis = Bitmap.createScaledBitmap(vis, 3000, Math.round(3000f * vis.getHeight() / vis.getWidth()), true);
+            JSArray lines = new JSArray();
+            Text t = Tasks.await(text.process(InputImage.fromBitmap(vis, 0)));
+            float W = vis.getWidth(), H = vis.getHeight();
+            for (Text.TextBlock b : t.getTextBlocks()) for (Text.Line l : b.getLines()) {
+                android.graphics.Point[] c = l.getCornerPoints();
+                if (c == null || c.length < 4) continue;
+                JSObject o = new JSObject();
+                o.put("t", l.getText());
+                JSArray q = new JSArray();
+                for (android.graphics.Point pt : c) { q.put(round3(pt.x / W)); q.put(round3(pt.y / H)); }
+                o.put("q", q); // coins (haut-gauche, haut-droit, bas-droit, bas-gauche), relatifs à l'image
+                lines.put(o);
+            }
+            int sw = Math.min(1280, vis.getWidth());
+            Bitmap small = Bitmap.createScaledBitmap(vis, sw, Math.round((float) sw * H / W), true);
+            ByteArrayOutputStream o = new ByteArrayOutputStream();
+            small.compress(Bitmap.CompressFormat.JPEG, 85, o);
+            JSObject res = new JSObject();
+            res.put("jpeg", Base64.encodeToString(o.toByteArray(), Base64.NO_WRAP));
+            res.put("w", small.getWidth()); res.put("h", small.getHeight());
+            res.put("srcW", vis.getWidth()); res.put("srcH", vis.getHeight());
+            res.put("lines", lines);
+            call.resolve(res);
+        } catch (Throwable e) { call.reject("photo : " + e.getMessage()); }
+    }
+
     // ---------- analyse d'une image ----------
     private void analyze(ImageProxy img) {
+        PluginCall sc = snapFromAnalysis;
+        if (sc != null) { // pas de photo pleine résolution : image de l'analyse
+            snapFromAnalysis = null;
+            Bitmap b; int rot;
+            try { b = img.toBitmap(); rot = img.getImageInfo().getRotationDegrees(); } finally { img.close(); }
+            snapProcess(sc, b, rot, snapVw, snapVh);
+            return;
+        }
         long now = SystemClock.elapsedRealtime();
         if (paused || now - last < 110 || preview == null) { img.close(); return; }
         last = now;

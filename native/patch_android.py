@@ -10,8 +10,15 @@ x = x.replace('</application>', '''    <receiver android:name=".PokeWidget" andr
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/poke_widget_info" />
         </receiver>
     </application>''')
+# raccourcis (appui long sur l'icône) et tuile des réglages rapides
+x = x.replace('</activity>', '    <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />\n        </activity>', 1)
+x = x.replace('</application>', '''    <service android:name=".ScanTile" android:exported="true" android:label="Scanner une carte" android:icon="@drawable/sc_tile"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+    </application>''')
 m.write_text(x)
-assert x.count('android.permission.') == 4 and 'PokeWidget' in x, 'manifeste non modifié'
+assert x.count('android.permission.') == 5 and 'PokeWidget' in x and 'shortcuts' in x, 'manifeste non modifié'
 src = pathlib.Path('native')
 for j in src.glob('*.java'): shutil.copy(j, root / 'java/fr/pierrick/pokescan' / j.name)
 shutil.copytree(src / 'res', root / 'res', dirs_exist_ok=True)
