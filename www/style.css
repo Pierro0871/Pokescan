@@ -268,3 +268,14 @@ html.native-cam #cam { background: transparent; }
 html.native-cam #video, html.native-cam #overlay { visibility: hidden; }
 #fastbar { background: var(--card, #1b1f27); border-radius: 12px; padding: 8px 10px; margin-bottom: 8px; align-items: center; gap: 8px; }
 #fastbar .conf { flex: 0 0 90px; }
+
+.dlyear { border-bottom: 1px solid var(--line); }
+.dlyear summary { list-style: none; padding: 10px 2px; cursor: pointer; align-items: center; gap: 10px; }
+.dlyear summary::-webkit-details-marker { display: none; }
+.dlyear summary::after { content: '▾'; color: var(--muted); }
+.dlyear[open] summary::after { content: '▴'; }
+.dlset { padding: 6px 4px 6px 28px; align-items: center; gap: 10px; }
+.dlset .sym, .dlset img { width: 32px; height: 32px; object-fit: contain; }
+.dlbar { position: sticky; bottom: 64px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin-top: 12px; align-items: center; z-index: 5; }
+.dlyear input[type=checkbox], .dlset input[type=checkbox] { width: 22px; height: 22px; flex: none; padding: 0; margin: 0; accent-color: var(--acc); }
+.dlyear summary b, .dlset .grow { text-align: left; }

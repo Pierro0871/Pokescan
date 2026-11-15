@@ -41,7 +41,8 @@ function renderColl() {
     <button class="setrow" id="wanted"><span class="sym">🔎</span><span class="grow"><b>Cartes à trouver</b><br><span class="muted small">Ce qui te manque dans tes extensions commencées, par prix</span></span></button>
     <button class="setrow" id="perso"><span class="sym">✍️</span><span class="grow"><b>Mes cartes perso</b><br><span class="muted small">Cartes absentes de la base, ajoutées à la main</span></span><span class="count">${persoN}</span></button>
     <div id="cf-list"></div>
-    <div class="col"><button id="dl-all" class="ghost">Tout télécharger pour le hors ligne…</button>
+    <div class="col"><button id="dl-pick" class="ghost">📥 Choisir les extensions à télécharger (par année…)</button>
+    <button id="dl-all" class="ghost">Tout télécharger pour le hors ligne…</button>
     <button id="refresh-cat" class="ghost">Mettre à jour la liste des extensions</button></div>
     <p id="dl-all-prog" class="muted small"></p>`;
   const list = () => {
@@ -75,17 +76,74 @@ function renderColl() {
   el.querySelector('.langsel').onchange = e => switchLang(e.target.value);
   $$('[data-tag]').forEach(b => b.onclick = () => openTag(b.dataset.tag));
   $('#refresh-cat').onclick = () => loadCatalog().then(() => toast('Liste à jour')).catch(err => toast('Erreur : ' + esc(err.message)));
-  $('#dl-all').onclick = downloadAll;
+  $('#dl-all').onclick = () => downloadAll();
+  $('#dl-pick').onclick = () => openDownloads();
+}
+
+// Choix des extensions à télécharger : une par une, ou toute une année d'un coup
+function openDownloads() {
+  const el = $('#view-coll'), sel = S.dlSel ||= new Set();
+  S.redrawColl = openDownloads;
+  const ready = id => S.fpSets.includes(id) && S.thumbSets.includes(id);
+  const byYear = {};
+  for (const st of allSets()) (byYear[LOGIC.year(st)] ||= []).push(st);
+  const years = Object.keys(byYear).sort().reverse(); // « — » (sans date) en dernier
+  const mo = sets => { const n = sets.reduce((a, s) => a + LOGIC.total(s), 0); return `${n} cartes, ~${Math.max(1, Math.round(n * 9 / 1000))} Mo`; };
+  el.innerHTML = `<button class="ghost" id="back">← Extensions</button><h1>Télécharger des extensions</h1>
+    <p class="muted small">Coche les extensions ou des années entières. Une fois téléchargées, elles marchent hors ligne (scan classique, images, prix).</p>
+    <input id="dl-q" type="search" placeholder="Filtrer (nom, série…)" autocomplete="off">
+    <div class="row filters"><button class="chip" id="dl-none">Tout décocher</button><button class="chip" id="dl-miss">Cocher ce qui manque</button></div>
+    <div id="dl-list">${years.map(y => {
+      const sets = byYear[y].sort((a, b) => (a.releaseDate || '').localeCompare(b.releaseDate || ''));
+      return `<details class="dlyear" data-y="${esc(y)}" ${S.dlOpen === y ? 'open' : ''}><summary class="row">
+          <input type="checkbox" class="ycheck" data-y="${esc(y)}" aria-label="Toute l'année ${esc(y)}">
+          <b class="grow">${y === '—' ? 'Sans date' : esc(y)}</b><span class="muted small">${sets.filter(s => ready(s.id)).length}/${sets.length} prêtes</span></summary>
+        ${sets.map(st => `<label class="row dlset" data-q="${esc(LOGIC.norm(st.name + ' ' + (st.serieName || '')))}">
+          <input type="checkbox" data-id="${esc(st.id)}" ${sel.has(st.id) ? 'checked' : ''}>
+          ${setLogo(st)}<span class="grow">${esc(st.name)}${st.srcLang ? ` <span class="muted small">${FLAG[st.srcLang]}</span>` : ''}<br><span class="muted small">${LOGIC.total(st)} cartes</span></span>
+          ${ready(st.id) ? '<span class="ok small">✓ prête</span>' : S.fpSets.includes(st.id) ? '<span class="muted small">sans miniatures</span>' : ''}</label>`).join('')}
+      </details>`;
+    }).join('')}</div>
+    <div class="dlbar row"><span class="grow small" id="dl-sum"></span><button class="primary" id="dl-go"></button></div>
+    <p id="dl-all-prog" class="muted small"></p>`;
+  const sum = () => {
+    const sets = allSets().filter(s => sel.has(s.id)), todo = sets.filter(s => !ready(s.id));
+    $('#dl-sum').textContent = sets.length ? `${sets.length} cochée(s) · ${todo.length ? 'à télécharger : ' + mo(todo) : 'déjà prêtes'}` : 'Rien de coché';
+    $('#dl-go').textContent = S.dlAll ? 'Arrêter' : 'Télécharger';
+    $('#dl-go').disabled = !S.dlAll && !todo.length;
+    $$('.ycheck').forEach(c => { const ids = byYear[c.dataset.y].map(s => s.id), k = ids.filter(id => sel.has(id)).length; c.checked = k === ids.length; c.indeterminate = k > 0 && k < ids.length; });
+  };
+  $$('#dl-list [data-id]').forEach(c => c.onchange = () => { c.checked ? sel.add(c.dataset.id) : sel.delete(c.dataset.id); sum(); });
+  $$('.ycheck').forEach(c => {
+    c.onclick = e => e.stopPropagation(); // cocher l'année sans ouvrir/fermer la liste
+    c.onchange = () => { for (const st of byYear[c.dataset.y]) c.checked ? sel.add(st.id) : sel.delete(st.id); $$(`.dlyear[data-y="${c.dataset.y}"] [data-id]`).forEach(x => x.checked = c.checked); sum(); };
+  });
+  $$('.dlyear').forEach(d => d.ontoggle = () => { if (d.open) S.dlOpen = d.dataset.y; });
+  $('#dl-q').oninput = e => {
+    const q = LOGIC.norm(e.target.value.trim());
+    $$('.dlset').forEach(l => l.hidden = q && !l.dataset.q.includes(q));
+    $$('.dlyear').forEach(d => { const any = [...d.querySelectorAll('.dlset')].some(l => !l.hidden); d.hidden = !any; if (q) d.open = any; });
+  };
+  $('#dl-none').onclick = () => { sel.clear(); openDownloads(); };
+  $('#dl-miss').onclick = () => { for (const st of allSets()) if (!ready(st.id)) sel.add(st.id); openDownloads(); };
+  $('#back').onclick = () => { S.collF ||= {}; renderColl(); };
+  $('#dl-go').onclick = async () => {
+    if (S.dlAll) { S.dlAll.stop = true; return; }
+    await downloadAll(allSets().filter(s => sel.has(s.id)), false);
+    if (S.redrawColl === openDownloads) openDownloads();
+  };
+  sum();
 }
 
 // Télécharge toutes les extensions (empreintes, prix, miniatures) : long, à faire en wifi
-async function downloadAll() {
+async function downloadAll(sets = allSets(), ask = true) {
   if (S.dlAll) { S.dlAll.stop = true; return; }
-  const todo = allSets().filter(s => !S.fpSets.includes(s.id) || !S.thumbSets.includes(s.id));
+  const todo = sets.filter(s => !S.fpSets.includes(s.id) || !S.thumbSets.includes(s.id));
   if (!todo.length) return toast('Tout est déjà téléchargé');
   const n = todo.reduce((a, s) => a + LOGIC.total(s), 0);
-  if (!confirm(`Télécharger ${todo.length} extensions (~${n} cartes, ~${Math.round(n * 9 / 1000)} Mo) ? À faire en wifi, ça peut prendre longtemps. Tu peux arrêter à tout moment.`)) return;
+  if (ask && !confirm(`Télécharger ${todo.length} extensions (~${n} cartes, ~${Math.round(n * 9 / 1000)} Mo) ? À faire en wifi, ça peut prendre longtemps. Tu peux arrêter à tout moment.`)) return;
   S.dlAll = { stop: false };
+  if ($('#dl-go')) $('#dl-go').textContent = 'Arrêter';
   let i = 0;
   for (const st of todo) {
     if (S.dlAll.stop) break;
@@ -95,7 +153,7 @@ async function downloadAll() {
   }
   S.dlAll = null;
   const p = $('#dl-all-prog'); if (p) p.textContent = '';
-  toast('Téléchargement hors ligne terminé');
+  toast(`Téléchargement terminé : ${i} extension(s)`);
   S.redrawColl?.();
 }
 
