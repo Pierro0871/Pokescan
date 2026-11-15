@@ -31,7 +31,7 @@ function renderColl() {
   el.innerHTML = `<div class="row"><h1 class="grow">Collection</h1>${langSelect()}</div>
     <input id="cf-q" type="search" placeholder="Chercher une extension (ex. Nuit, McDo, promo…)" value="${esc(f.q)}" autocomplete="off">
     <div class="row filters">
-      <select id="cf-sort">${[['serie', 'Par série'], ['new', 'Plus récentes'], ['old', 'Plus anciennes'], ['name', 'Nom A→Z'], ['prog', 'Plus avancées'], ['progLow', 'Moins avancées']].map(([k, l]) => `<option value="${k}" ${f.sort === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <select id="cf-sort">${[['serie', 'Par série'], ['new', 'Plus récentes'], ['old', 'Plus anciennes'], ['name', 'Nom A→Z'], ['prog', 'Plus avancées'], ['progLow', 'Moins avancées'], ['empty', 'Aucune carte d\'abord']].map(([k, l]) => `<option value="${k}" ${f.sort === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <select id="cf-serie"><option value="">Toutes séries</option>${S.catalog.map(s => `<option value="${esc(s.id)}" ${f.serie === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
       <select id="cf-year"><option value="">Toutes années</option>${years.map(y => `<option ${f.year === y ? 'selected' : ''}>${y}</option>`).join('')}</select>
     </div>
@@ -84,15 +84,20 @@ function renderColl() {
 function openDownloads() {
   const el = $('#view-coll'), sel = S.dlSel ||= new Set();
   S.redrawColl = openDownloads;
-  const ready = id => S.fpSets.includes(id) && S.thumbSets.includes(id);
+  const ready = id => S.fpSets.includes(id) && S.thumbSets.includes(id), has = id => S.fpSets.includes(id) || S.thumbSets.includes(id);
+  const owned = {};
+  for (const e of S.coll) if (langOf(e) === S.lang) (owned[e.setId] ||= new Set()).add(e.cardId);
+  const nOwn = id => owned[id]?.size || 0;
   const byYear = {};
-  for (const st of allSets()) (byYear[LOGIC.year(st)] ||= []).push(st);
+  for (const st of allSets()) if (!S.dlOnly || has(st.id)) (byYear[LOGIC.year(st)] ||= []).push(st);
   const years = Object.keys(byYear).sort().reverse(); // « — » (sans date) en dernier
   const mo = sets => { const n = sets.reduce((a, s) => a + LOGIC.total(s), 0); return `${n} cartes, ~${Math.max(1, Math.round(n * 9 / 1000))} Mo`; };
   el.innerHTML = `<button class="ghost" id="back">← Extensions</button><h1>Télécharger des extensions</h1>
     <p class="muted small">Coche les extensions ou des années entières. Une fois téléchargées, elles marchent hors ligne (scan classique, images, prix).</p>
     <input id="dl-q" type="search" placeholder="Filtrer (nom, série…)" autocomplete="off">
-    <div class="row filters"><button class="chip" id="dl-none">Tout décocher</button><button class="chip" id="dl-miss">Cocher ce qui manque</button></div>
+    <div class="row filters"><button class="chip" id="dl-none">Tout décocher</button><button class="chip" id="dl-miss">Cocher ce qui manque</button>
+      <button class="chip" id="dl-empty">Cocher celles sans carte</button><button class="chip ${S.dlOnly ? 'on' : ''}" id="dl-only">Téléchargées seulement</button></div>
+    ${Object.keys(byYear).length ? '' : '<p class="muted">Aucune extension téléchargée.</p>'}
     <div id="dl-list">${years.map(y => {
       const sets = byYear[y].sort((a, b) => (a.releaseDate || '').localeCompare(b.releaseDate || ''));
       return `<details class="dlyear" data-y="${esc(y)}" ${S.dlOpen === y ? 'open' : ''}><summary class="row">
@@ -100,15 +105,17 @@ function openDownloads() {
           <b class="grow">${y === '—' ? 'Sans date' : esc(y)}</b><span class="muted small">${sets.filter(s => ready(s.id)).length}/${sets.length} prêtes</span></summary>
         ${sets.map(st => `<label class="row dlset" data-q="${esc(LOGIC.norm(st.name + ' ' + (st.serieName || '')))}">
           <input type="checkbox" data-id="${esc(st.id)}" ${sel.has(st.id) ? 'checked' : ''}>
-          ${setLogo(st)}<span class="grow">${esc(st.name)}${st.srcLang ? ` <span class="muted small">${FLAG[st.srcLang]}</span>` : ''}<br><span class="muted small">${LOGIC.total(st)} cartes</span></span>
+          ${setLogo(st)}<span class="grow">${esc(st.name)}${st.srcLang ? ` <span class="muted small">${FLAG[st.srcLang]}</span>` : ''}<br><span class="muted small">${LOGIC.total(st)} cartes · ${nOwn(st.id) ? `<b>${nOwn(st.id)}</b> possédée(s)` : 'aucune possédée'}</span></span>
           ${ready(st.id) ? '<span class="ok small">✓ prête</span>' : S.fpSets.includes(st.id) ? '<span class="muted small">sans miniatures</span>' : ''}</label>`).join('')}
       </details>`;
     }).join('')}</div>
-    <div class="dlbar row"><span class="grow small" id="dl-sum"></span><button class="primary" id="dl-go"></button></div>
+    <div class="dlbar row"><span class="grow small" id="dl-sum"></span><button class="ghost" id="dl-del">🗑️</button><button class="primary" id="dl-go"></button></div>
     <p id="dl-all-prog" class="muted small"></p>`;
   const sum = () => {
-    const sets = allSets().filter(s => sel.has(s.id)), todo = sets.filter(s => !ready(s.id));
-    $('#dl-sum').textContent = sets.length ? `${sets.length} cochée(s) · ${todo.length ? 'à télécharger : ' + mo(todo) : 'déjà prêtes'}` : 'Rien de coché';
+    const sets = allSets().filter(s => sel.has(s.id)), todo = sets.filter(s => !ready(s.id)), del = sets.filter(s => has(s.id));
+    $('#dl-sum').textContent = sets.length ? `${sets.length} cochée(s) · ${todo.length ? 'à télécharger : ' + mo(todo) : 'déjà prêtes'}${del.length ? ` · ${del.length} supprimable(s)` : ''}` : 'Rien de coché';
+    $('#dl-del').disabled = !!S.dlAll || !del.length;
+    $('#dl-del').textContent = del.length ? `🗑️ Supprimer (${del.length})` : '🗑️ Supprimer';
     $('#dl-go').textContent = S.dlAll ? 'Arrêter' : 'Télécharger';
     $('#dl-go').disabled = !S.dlAll && !todo.length;
     $$('.ycheck').forEach(c => { const ids = byYear[c.dataset.y].map(s => s.id), k = ids.filter(id => sel.has(id)).length; c.checked = k === ids.length; c.indeterminate = k > 0 && k < ids.length; });
@@ -125,6 +132,18 @@ function openDownloads() {
     $$('.dlyear').forEach(d => { const any = [...d.querySelectorAll('.dlset')].some(l => !l.hidden); d.hidden = !any; if (q) d.open = any; });
   };
   $('#dl-none').onclick = () => { sel.clear(); openDownloads(); };
+  $('#dl-empty').onclick = () => { for (const st of allSets()) if (!nOwn(st.id) && (!S.dlOnly || has(st.id))) sel.add(st.id); openDownloads(); };
+  $('#dl-only').onclick = () => { S.dlOnly = !S.dlOnly; openDownloads(); };
+  $('#dl-del').onclick = async () => {
+    const del = allSets().filter(s => sel.has(s.id) && has(s.id));
+    if (!del.length) return;
+    const withCards = del.filter(s => nOwn(s.id)).length;
+    if (!confirm(`Supprimer les données téléchargées de ${del.length} extension(s) ?${withCards ? `\n${withCards} contiennent des cartes de ta collection : tes cartes restent, seules les empreintes et miniatures hors ligne partent.` : ''}\nTu pourras les retélécharger quand tu veux.`)) return;
+    await removeSetData(del.map(s => s.id));
+    for (const s of del) sel.delete(s.id);
+    toast(`${del.length} extension(s) supprimée(s) de l'appareil`);
+    openDownloads();
+  };
   $('#dl-miss').onclick = () => { for (const st of allSets()) if (!ready(st.id)) sel.add(st.id); openDownloads(); };
   $('#back').onclick = () => { S.collF ||= {}; renderColl(); };
   $('#dl-go').onclick = async () => {

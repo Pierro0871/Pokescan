@@ -33,6 +33,7 @@ const kv = (() => {
   };
   return {
     get: k => tx('readonly', s => s.get(k)),
+    del: k => tx('readwrite', s => s.delete(k)).catch(() => { }),
     // échec d'écriture (stockage plein…) : on prévient une fois au lieu d'échouer en silence
     set: (k, v) => tx('readwrite', s => s.put(v, k)).catch(err => { if (!kv.warned) { kv.warned = true; toast('⚠️ Enregistrement impossible (' + esc(err?.name || err) + '). Fais une sauvegarde depuis Stats.'); } }),
   };
@@ -339,6 +340,17 @@ async function addThumbs(setId, onProg) {
   });
   await kv.set(LK('thumb:' + setId), thumbs); Object.assign(S.thumbs, thumbs);
   if (!S.thumbSets.includes(setId)) { S.thumbSets.push(setId); await kv.set(LK('thumbsets'), S.thumbSets); }
+}
+// Supprime les données téléchargées d'extensions (empreintes, miniatures) : la collection n'est pas touchée
+async function removeSetData(ids) {
+  const set = new Set(ids);
+  for (const id of set) { await kv.del(LK('fp:' + id)); await kv.del(LK('thumb:' + id)); }
+  S.fpSets = S.fpSets.filter(id => !set.has(id)); S.thumbSets = S.thumbSets.filter(id => !set.has(id));
+  S.fpCards = S.fpCards.filter(c => !set.has(c.setId));
+  for (const k of Object.keys(S.thumbs)) if (set.has(setIdOf({ id: k, localId: k.split('-').pop() }))) delete S.thumbs[k];
+  await kv.set(LK('fpsets'), S.fpSets); await kv.set(LK('thumbsets'), S.thumbSets);
+  if (A.only && set.has(A.only)) A.only = null;
+  if (typeof FS !== 'undefined') FS.mini = null;
 }
 async function loadThumbs(setId) { if (S.thumbSets.includes(setId)) Object.assign(S.thumbs, (await kv.get(LK('thumb:' + setId))) || {}); }
 

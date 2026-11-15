@@ -33,6 +33,10 @@
     };
     if (sort === 'new') return grp(by(date, -1), year);
     if (sort === 'old') return grp(by(date, 1), year);
+    if (sort === 'empty') { // extensions où je n'ai aucune carte d'abord (les plus récentes en haut)
+      const l = by(date, -1);
+      return [{ title: 'Aucune carte', sets: l.filter(st => !owned[st.id]) }, { title: 'Avec des cartes', sets: l.filter(st => owned[st.id]) }].filter(g => g.sets.length);
+    }
     if (sort === 'name') return [{ title: '', sets: by(st => norm(st.name), 1) }];
     if (sort === 'prog') return [{ title: '', sets: by(st => [1 - progress(st, owned), norm(st.name)].join(), 1) }];
     if (sort === 'progLow') return [{ title: '', sets: by(st => [progress(st, owned), norm(st.name)].join(), 1) }];
