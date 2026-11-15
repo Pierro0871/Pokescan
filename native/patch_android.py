@@ -24,4 +24,16 @@ if n:
     g = pathlib.Path('android/app/build.gradle'); t = g.read_text()
     t = re.sub(r'versionCode \d+', f'versionCode {n}', t); t = re.sub(r'versionName "[^"]*"', f'versionName "{n}"', t)
     g.write_text(t); assert f'versionCode {n}' in t
+# moteur de scan natif : caméra CameraX, lecture de texte ML Kit (embarquée, hors ligne), TensorFlow Lite (LiteRT)
+g = pathlib.Path('android/app/build.gradle'); t = g.read_text()
+deps = """
+    implementation "androidx.camera:camera-core:1.4.2"
+    implementation "androidx.camera:camera-camera2:1.4.2"
+    implementation "androidx.camera:camera-lifecycle:1.4.2"
+    implementation "androidx.camera:camera-view:1.4.2"
+    implementation "com.google.mlkit:text-recognition:16.0.1"
+    implementation "com.google.ai.edge.litert:litert:1.4.2"
+"""
+t = t.replace('\ndependencies {', '\ndependencies {' + deps, 1)
+g.write_text(t); assert 'mlkit:text-recognition' in t, 'dépendances non ajoutées'
 print('android patché')

@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ApkUpdater.class);
         registerPlugin(HomeWidget.class);
+        registerPlugin(NativeScan.class);
         super.onCreate(savedInstanceState);
     }
 }
