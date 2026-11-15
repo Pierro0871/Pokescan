@@ -377,7 +377,7 @@ public class NativeScan extends Plugin {
         for (int i = 0; i < hn; i++) ord[i] = i;
         java.util.Arrays.sort(ord, (a, b) -> Float.compare(hs[b], hs[a]));
         JSArray ids = new JSArray(), sc = new JSArray();
-        for (int i : ord) { ids.put(hi[i]); sc.put(Math.round(hs[i] * 1000) / 1000.0); }
+        for (int i : ord) { ids.put(hi[i]); try { sc.put(Math.round(hs[i] * 1000) / 1000.0); } catch (org.json.JSONException e) { sc.put(0); } }
         ev.put("ids", ids); ev.put("sc", sc);
         ev.put("embMs", SystemClock.elapsedRealtime() - t0);
     }
