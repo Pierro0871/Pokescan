@@ -279,3 +279,26 @@ html.native-cam #video, html.native-cam #overlay { visibility: hidden; }
 .dlbar { position: sticky; bottom: 64px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin-top: 12px; align-items: center; z-index: 5; }
 .dlyear input[type=checkbox], .dlset input[type=checkbox] { width: 22px; height: 22px; flex: none; padding: 0; margin: 0; accent-color: var(--acc); }
 .dlyear summary b, .dlset .grow { text-align: left; }
+/* version à choisir sur l'image caméra */
+.varbtns { gap: 8px; }
+.varbtns button { flex: 1; padding: 10px 6px; line-height: 1.25; }
+/* carte de valeur */
+.jackpot { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; pointer-events: auto; animation: jkIn .25s ease-out; }
+.jackpot.out { animation: jkOut .5s ease-in forwards; }
+.jk-glow { position: absolute; inset: 0; background: radial-gradient(circle at 50% 45%, rgba(255,203,5,.55), rgba(255,140,0,.18) 40%, rgba(0,0,0,.55) 75%); }
+.jackpot.big .jk-glow { background: radial-gradient(circle at 50% 45%, rgba(255,240,140,.8), rgba(255,170,0,.3) 40%, rgba(0,0,0,.7) 75%); }
+.jk-card { position: absolute; top: 18%; width: 46vw; max-width: 240px; aspect-ratio: 63/88; border-radius: 12px; overflow: hidden;
+  box-shadow: 0 0 0 3px #ffcb05, 0 0 40px 10px rgba(255,203,5,.7); animation: jkCard .9s cubic-bezier(.2,1.4,.4,1) both; }
+.jk-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.jk-card::after { content: ''; position: absolute; inset: -50%; background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,.75) 50%, transparent 60%); animation: jkShine 1.4s .5s ease-in-out 2; transform: translateX(-100%); }
+.jk-msg { position: absolute; top: calc(18% + min(64vw, 335px) + 18px); display: flex; flex-direction: column; align-items: center; gap: 2px; color: #fff; text-shadow: 0 2px 8px #000; animation: jkPop .5s .35s cubic-bezier(.2,1.6,.4,1) both; }
+.jk-msg b { font-size: 26px; color: #ffe066; }
+.jk-msg strong { font-size: 34px; color: #ffcb05; }
+.jackpot i { position: absolute; top: 45%; left: 50%; font-style: normal; font-size: 26px; animation: jkCoin 1.1s var(--d) cubic-bezier(.1,.8,.3,1) both; }
+@keyframes jkIn { from { opacity: 0 } }
+@keyframes jkOut { to { opacity: 0 } }
+@keyframes jkCard { from { transform: scale(.2) rotate(-25deg); opacity: 0 } 60% { transform: scale(1.08) rotate(4deg); opacity: 1 } to { transform: scale(1) rotate(0) } }
+@keyframes jkShine { to { transform: translateX(100%) } }
+@keyframes jkPop { from { transform: scale(.3); opacity: 0 } }
+@keyframes jkCoin { from { transform: translate(-50%, -50%) scale(.3); opacity: 1 } 70% { opacity: 1 } to { transform: translate(calc(-50% + var(--x)), calc(-50% + var(--y))) scale(1.2) rotate(200deg); opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { .jackpot *, .jackpot { animation-duration: .01s !important; } }

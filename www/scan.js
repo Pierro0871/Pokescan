@@ -3,7 +3,7 @@
 
 // ---------- scan automatique ----------
 const A = { timer: 0, res: null, qs: null, lastTop: null, doubtSince: 0, hold: null, paused: false, frames: [], corners: null, track: null, torch: false,
-  variant: 'normal', mode: 'one', session: [], booster: null, auto: false, grade: null, batch: { n: 0, v: 0 }, autoVar: false, sheen: null };
+  variant: 'ask', mode: 'one', session: [], booster: null, auto: false, grade: null, batch: { n: 0, v: 0 }, autoVar: false, sheen: null };
 let CV = null; // OpenCV, chargé en arrière-plan (13 Mo)
 function cvReady() {
   if (!CV && window.cv && !cvReady.p) cvReady.p = Promise.resolve(window.cv).then(m => { CV = m; });
@@ -377,25 +377,115 @@ function confidence(list, extra = {}) {
 // Propositions affichées par-dessus l'image caméra
 function clearProp() { const p = $('#camprop'); if (p) p.innerHTML = ''; }
 
-function choose(c, fromEl) {
+async function choose(c, fromEl) {
+  if (A.choosing) return;
+  A.choosing = true; A.paused = true; fsPause(true);
   const extra = A.mode === 'graded' && A.grade?.grade ? { grade: { co: A.grade.co || '?', g: A.grade.grade, cert: A.grade.cert || '' } } : {};
-  const hold = A.res[0].card.id === c.id ? c.id : A.res[0].card.id;
-  clearProp();
-  feedback('add');
-  flyCamera();
-  A.grade = null;
-  // enregistrement une fois l'animation lancée : il ne la bloque plus
-  requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
-    addFromScan(c, extra);
-    resume(hold);
-    toast(`Ajouté : <b>${esc(c.name)}</b> (${esc(c.setName)} ${esc(c.localId)}) — touche pour modifier`, () => openCard(c));
-  }, 0)));
+  const hold = A.res?.[0]?.card.id ?? c.id;
+  try {
+    const info = await cardInfo(c);
+    let variant = scanVariant();
+    if (variant === 'ask') { // doute sur la version : on demande (sauf s'il n'en existe qu'une)
+      const opts = variantOptions(info);
+      variant = opts.length === 1 ? opts[0] : await askVariant(c, opts);
+      if (!variant) { resume(hold); return; }
+    }
+    clearProp();
+    feedback('add');
+    flyCamera();
+    A.grade = null;
+    // enregistrement une fois l'animation lancée : il ne la bloque plus
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
+      addFromScan(c, extra, variant);
+      resume(hold);
+      const v = variant !== 'normal' ? ` · ${VARIANT_LABEL[variant] || variant}` : '';
+      toast(`Ajouté : <b>${esc(c.name)}</b> (${esc(c.setName)} ${esc(c.localId)}${v}) — touche pour modifier`, () => openCard(c));
+      celebrate(c, variant);
+    }, 0)));
+  } finally { A.choosing = false; }
+}
+
+// ---------- version de la carte (normale / reverse / holo) ----------
+const VARIANT_LABEL = { normal: 'Normale', reverse: 'Reverse', holo: 'Holo' };
+const VARS = new Map();
+// Versions existantes et prix : extension téléchargée, sinon la fiche en ligne (1,5 s max)
+async function cardInfo(c) {
+  let v = c.variants || S.fpCards.find(x => x.id === c.id)?.variants || VARS.get(c.id);
+  if ((!v || !S.prices[c.id]) && !c.id.startsWith('perso-')) {
+    try {
+      const d = await withTimeout(getJSON('/cards/' + encodeURIComponent(c.id), FS.ix && FS.ix.sets.find(s => s.id === c.setId)?.enOnly ? 'en' : S.lang), 1500);
+      rememberMeta(d);
+      if (d.variants) { v = d.variants; VARS.set(c.id, v); }
+      if (d.pricing?.cardmarket) { S.prices[c.id] = d.pricing.cardmarket; kv.set('prices', S.prices); }
+    } catch { } // hors ligne : toutes les versions sont proposées
+  }
+  return { variants: v, price: S.prices[c.id] };
+}
+function variantOptions(info) {
+  const v = info.variants;
+  if (!v) return ['normal', 'reverse', 'holo'];
+  const o = ['normal', 'reverse', 'holo'].filter(k => v[k]);
+  return o.length ? o : ['normal'];
+}
+// Choix sur l'image caméra, avec le prix de chaque version
+function askVariant(c, opts) {
+  feedback('found');
+  status('Quelle version ?');
+  return new Promise(res => {
+    const box = $('#camprop'), p = S.prices[c.id];
+    const sheen = A.sheen ? `<p class="small sheen">✨ Reflets vus : plutôt ${A.sheen === 'reverse' ? 'Reverse' : 'Holo'}</p>` : '';
+    box.innerHTML = `<div class="match sure varask">
+        ${imgOf(c) ? `<img src="${esc(imgOf(c))}" alt="">` : ''}
+        <span class="grow"><b>${esc(c.name)}</b><br><span class="muted">${esc(c.setName)} · n° ${esc(c.localId)}</span><br><b>Quelle version ?</b></span></div>
+      ${sheen}<div class="row varbtns">${opts.map(k => {
+        const pr = FP.unitPrice(p, k, 'NM', S.coef).trend;
+        return `<button class="${A.sheen === k ? 'primary' : 'ghost'}" data-v="${k}">${{ normal: '⬜', reverse: '🔁', holo: '✨' }[k]} ${VARIANT_LABEL[k]}${pr != null ? `<br><span class="small">${eur(pr)}</span>` : ''}</button>`;
+      }).join('')}</div>
+      <div class="row"><button class="ghost" id="var-cancel">Annuler</button></div>`;
+    box.querySelectorAll('[data-v]').forEach(b => b.onclick = () => res(b.dataset.v));
+    $('#var-cancel').onclick = () => res(null);
+  });
+}
+
+// ---------- carte de valeur : animation et message ----------
+async function celebrate(c, variant, demo) {
+  const price = demo ?? FP.unitPrice(S.prices[c.id], variant, 'NM', S.coef).trend, min = demo ? 1 : S.richMin ?? 20;
+  if (!min || price == null || price < min) return;
+  const big = price >= Math.max(100, min * 5);
+  try { navigator.vibrate?.(big ? [60, 40, 60, 40, 200] : [40, 30, 120]); } catch { }
+  playJingle(big);
+  const el = document.createElement('div');
+  el.className = 'jackpot' + (big ? ' big' : '');
+  const coins = Array.from({ length: big ? 26 : 14 }, (_, i) => {
+    const a = (i / (big ? 26 : 14)) * Math.PI * 2 + Math.random() * 0.4, r = 120 + Math.random() * 140;
+    return `<i style="--x:${Math.round(Math.cos(a) * r)}px;--y:${Math.round(Math.sin(a) * r)}px;--d:${(Math.random() * 0.25).toFixed(2)}s">${['💰', '✨', '🪙', '⭐'][i % 4]}</i>`;
+  }).join('');
+  el.innerHTML = `<div class="jk-glow"></div>${coins}<div class="jk-card">${imgOf(c) ? `<img src="${esc(imgOf(c))}" alt="">` : ''}</div>
+    <div class="jk-msg"><b>${big ? '💎 JACKPOT !' : '💰 Carte de valeur !'}</b><span>${esc(c.name)}${variant !== 'normal' ? ' ' + VARIANT_LABEL[variant] : ''}</span><strong>${eur(price)}</strong></div>`;
+  document.body.appendChild(el);
+  el.onclick = () => el.remove();
+  setTimeout(() => el.classList.add('out'), big ? 3200 : 2400);
+  setTimeout(() => el.remove(), big ? 3700 : 2900);
+}
+function playJingle(big) {
+  if ((S.sound || 'bip') === 'none') return;
+  try {
+    audio ||= new AudioContext();
+    const t = audio.currentTime, notes = big ? [523, 659, 784, 1047, 1319, 1568] : [784, 988, 1319];
+    notes.forEach((f, i) => {
+      const o = audio.createOscillator(), g = audio.createGain(), s = t + i * 0.09;
+      o.type = 'triangle'; o.frequency.setValueAtTime(f, s);
+      g.gain.setValueAtTime(0.12, s); g.gain.exponentialRampToValueAtTime(0.001, s + 0.35);
+      o.connect(g).connect(audio.destination); o.start(s); o.stop(s + 0.36);
+    });
+  } catch { }
 }
 
 // Ajout depuis le scan : variante choisie, session en cours, booster en cours
 const scanVariant = () => (A.autoVar && A.sheen) || A.variant;
-function addFromScan(c, extra = {}) {
-  const variant = scanVariant();
+function addFromScan(c, extra = {}, v) {
+  let variant = v || scanVariant();
+  if (variant === 'ask') variant = defaultVariant(c);
   const e = addCard(c, { variant, ...extra });
   if (A.mode === 'batch') {
     A.batch.n++; A.batch.v += FP.unitPrice(S.prices[c.id], variant, 'NM', S.coef).trend || 0;
@@ -921,7 +1011,9 @@ async function quickAdd(text) {
 function bindScanUI() {
   $('#btn-scan').onclick = () => { if (A.mode === 'page') return scanPage(); if (!A.res) return toast('Vise une carte d\'abord'); propose(false); };
   $('#torch').onclick = toggleTorch;
-  $$('[data-var]').forEach(b => b.onclick = () => { A.variant = b.dataset.var; $$('[data-var]').forEach(x => x.classList.toggle('on', x === b)); });
+  const setVar = v => { A.variant = v; $$('[data-var]').forEach(x => x.classList.toggle('on', x.dataset.var === v)); };
+  kv.get('scanvar').then(v => setVar(v || 'ask'));
+  $$('[data-var]').forEach(b => b.onclick = () => { setVar(b.dataset.var); kv.set('scanvar', A.variant); });
   $$('[data-mode]').forEach(b => b.onclick = () => {
     A.mode = b.dataset.mode; $$('[data-mode]').forEach(x => x.classList.toggle('on', x === b));
     $('#cam').classList.toggle('page', A.mode === 'page'); $('#matches').innerHTML = ''; clearProp(); drawQuads([], { x: 0, y: 0 });

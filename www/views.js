@@ -558,6 +558,7 @@ function renderStats() {
     <div class="row"><span class="grow">Thème</span>${[['auto', 'Auto'], ['dark', 'Sombre'], ['light', 'Clair']].map(([k, l]) => `<button class="chip ${S.theme === k ? 'on' : ''}" data-th="${k}">${l}</button>`).join('')}</div>
     ${FS.ok ? `<div class="row"><span class="grow">Moteur du scan</span><select id="engine"><option value="auto" ${FS.engine !== 'web' ? 'selected' : ''}>⚡ Rapide (natif)</option><option value="web" ${FS.engine === 'web' ? 'selected' : ''}>Classique</option></select></div>
     <div class="row small"><span class="grow muted">Base du scan rapide : ${FS.ix ? `${FS.ix.cards.length.toLocaleString('fr')} cartes, du ${esc(FS.v || '?')}` : 'pas encore téléchargée'}</span><button class="ghost small" id="fs-redl">${FS.ix ? 'Retélécharger' : 'Télécharger'}</button></div>` : ''}
+    <div class="row"><span class="grow">💰 Alerte carte de valeur dès</span><select id="richmin">${[0, 5, 10, 20, 50, 100].map(v => `<option value="${v}" ${(S.richMin ?? 20) === v ? 'selected' : ''}>${v ? eur(v) : 'Jamais'}</option>`).join('')}</select><button class="ghost small" id="rich-try">▶</button></div>
     <div class="row"><span class="grow">Son du scan</span><select id="snd">${Object.entries(SOUNDS).map(([k, v]) => `<option value="${k}" ${(S.sound || 'bip') === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select><button class="ghost small" id="snd-try">▶</button></div>
     <div class="row"><span class="grow">Couleur</span>${Object.entries(ACCENTS).map(([k, c]) => `<button class="swatch ${(S.accent || 'jaune') === k ? 'on' : ''}" data-ac="${k}" style="background:${c}" aria-label="${k}"></button>`).join('')}</div>
     <p class="muted small">Coefficients de prix selon l'état (estimation appliquée au prix Near Mint de Cardmarket) :</p>
@@ -585,6 +586,8 @@ function renderStats() {
   $$('[data-rk]').forEach(b => b.onclick = () => { S.rankBy = b.dataset.rk; renderStats(); });
   if ($('#engine')) $('#engine').onchange = e => { FS.engine = e.target.value; kv.set('engine', FS.engine); fsBar(); toast(FS.engine === 'web' ? 'Scan classique (moteur web)' : '⚡ Scan rapide (moteur natif)'); };
   if ($('#fs-redl')) $('#fs-redl').onclick = () => fsDownload().then(renderStats);
+  $('#richmin').onchange = e => { S.richMin = +e.target.value; kv.set('richmin', S.richMin); };
+  $('#rich-try').onclick = () => celebrate({ id: 'demo', name: 'Démo', setName: '', localId: '' }, 'normal', 150);
   $('#snd').onchange = e => { S.sound = e.target.value; kv.set('sound', S.sound); playSound('add'); };
   $('#snd-try').onclick = () => playSound('add');
   $$('[data-ac]').forEach(b => b.onclick = () => { S.accent = b.dataset.ac; kv.set('accent', S.accent); applyTheme(); renderStats(); });
@@ -750,7 +753,7 @@ async function init() {
   S.coef = { ...FP.DEFAULT_COEF, ...(await g('coef', {})) };
   await loadLang(await g('lang', 'fr'));
   S.meta = await g('meta', {}); S.hist = await g('hist', []); S.valhist = await g('valhist', {});
-  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []); S.cardBack = await g('cardback', null); S.sound = await g('sound', 'bip'); S.accent = await g('accent', 'jaune');
+  S.boosters = await g('boosters', []); S.ach = await g('ach', []); S.theme = await g('theme', 'auto'); S.decks = await g('decks', []); S.cardBack = await g('cardback', null); S.sound = await g('sound', 'bip'); S.accent = await g('accent', 'jaune'); S.richMin = await g('richmin', 20);
   applyTheme(); matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
   $$('#tabs button').forEach(b => b.onclick = () => show(b.dataset.view));
   $('#sheet').onclick = e => { if (e.target.id === 'sheet') closeSheet(); };
